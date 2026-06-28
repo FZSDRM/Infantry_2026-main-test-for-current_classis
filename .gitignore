@@ -114,6 +114,7 @@ desktop.ini
 .yoyo/
 
 # Local gimbal detection experiments
+gimbal_detect/
 gimbal_detect/.gitignore
 gimbal_detect/.python-version
 gimbal_detect/detect_v2.py
@@ -126,6 +127,14 @@ gimbal_detect/yaw_data.csv
 
 # Local UI reference copy
 ui参考/
+
+# Local docs and external vision projects
+Bug_Report.md
+CODEX_PROJECT_GUIDE.md
+云台控制系统移植指南.md
+上下位机通信协议兼容性分析.md
+modules/master_machine/视觉通信接口说明.md
+gimbal_aim_vision/
 
 # Downloadable environment tool packages
 开发环境配置/
