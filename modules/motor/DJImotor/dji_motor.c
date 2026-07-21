@@ -295,6 +295,9 @@ float DJIMotorGetPowerLimitCoef(void)
  */
 static void DecodeDJIMotor(CANInstance *_instance)
 {
+    if (_instance == NULL || _instance->rx_len != 8u)
+        return;
+
     // 这里对can instance的id进行了强制转换,从而获得电机的instance实例地址
     DJIMotorInstance *motor = (DJIMotorInstance *)_instance->id;
     uint8_t *rxbuff = _instance->rx_buff;

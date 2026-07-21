@@ -16,6 +16,33 @@ function Assert-TextMatch {
     }
 }
 
+function Get-CTokenSequenceIndex {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Tokens,
+        [Parameter(Mandatory)][string]$CodeText
+    )
+
+    $patternTokens = @(Get-ActiveCTokens -SourceText $CodeText)
+    for ($startIndex = 0; $startIndex -le $Tokens.Count - $patternTokens.Count; $startIndex++) {
+        $matchesSequence = $true
+        for ($patternIndex = 0; $patternIndex -lt $patternTokens.Count; $patternIndex++) {
+            $sourceToken = $Tokens[$startIndex + $patternIndex]
+            $patternToken = $patternTokens[$patternIndex]
+            if ($sourceToken.Kind -cne $patternToken.Kind -or
+                $sourceToken.Text -cne $patternToken.Text -or
+                $sourceToken.IsPreprocessorDirective -ne $patternToken.IsPreprocessorDirective) {
+                $matchesSequence = $false
+                break
+            }
+        }
+        if ($matchesSequence) {
+            return $startIndex
+        }
+    }
+
+    return -1
+}
+
 $requiredTokenSequences = @(
     [PSCustomObject]@{ Path = 'application/robot_def.h'; Code = '#define GM6020_ID_SCAN_MODE' }
     [PSCustomObject]@{ Path = 'application/robot_def.h'; Code = '#define GM6020_ID_SCAN_FIRST_ID 1u' }
@@ -73,6 +100,20 @@ Assert-CBodyTokenSequenceState -RelativePath 'modules/motor/DJImotor/dji_motor.c
     -CodeText 'if (m == NULL) return 0u;' -ShouldBePresent $true
 Assert-CBodyTokenSequenceState -RelativePath 'modules/motor/DJImotor/dji_motor.c' -BodyFunction 'DJIMotorHasFeedback' `
     -CodeText 'return m->feedback_received;' -ShouldBePresent $true
+
+$decodeTokens = @(Get-SourceFunctionBodyTokens -RelativePath 'modules/motor/DJImotor/dji_motor.c' `
+    -FunctionName 'DecodeDJIMotor' | Where-Object { -not $_.IsPreprocessorDirective })
+$decodeGuardIndex = Get-CTokenSequenceIndex -Tokens $decodeTokens `
+    -CodeText 'if (_instance == NULL || _instance->rx_len != 8u) return;'
+$rxBufferReadIndex = Get-CTokenSequenceIndex -Tokens $decodeTokens -CodeText '_instance->rx_buff'
+$daemonReloadIndex = Get-CTokenSequenceIndex -Tokens $decodeTokens -CodeText 'DaemonReload(motor->motor_daemon);'
+$feedbackLatchIndex = Get-CTokenSequenceIndex -Tokens $decodeTokens -CodeText 'motor->feedback_received = 1u;'
+if ($decodeGuardIndex -ne 0 -or
+    $rxBufferReadIndex -le $decodeGuardIndex -or
+    $daemonReloadIndex -le $decodeGuardIndex -or
+    $feedbackLatchIndex -le $decodeGuardIndex) {
+    throw 'DecodeDJIMotor must reject NULL/non-8-byte frames before reading rx_buff, reloading the daemon, or latching first feedback.'
+}
 
 $djiMotorSource = Get-Content -LiteralPath (Join-Path $workspaceRoot 'modules/motor/DJImotor/dji_motor.c') -Raw -Encoding UTF8
 $feedbackSetMatches = @([regex]::Matches($djiMotorSource, 'feedback_received\s*=\s*1u\s*;'))
