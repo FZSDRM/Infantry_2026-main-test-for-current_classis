@@ -18,7 +18,7 @@
 
 #ifdef GIMBAL_BOARD
 #include "gimbal.h"
-#include "shoot.h"
+// #include "shoot.h" // 云台视觉专用分支不启用发射机构
 #endif
 
 #if defined(GIMBAL_BOARD) || defined(CHASSIS_ONLY) || defined(FORCE_CONTROL_CHASSIS_BOARD)
@@ -45,7 +45,7 @@ void RobotInit()
 
 #ifdef GIMBAL_BOARD
     GimbalInit();
-    ShootInit();
+    // ShootInit(); // 云台视觉专用分支不启用发射机构
 #endif
 
 #if defined(CHASSIS_BOARD) || defined(CHASSIS_ONLY)
@@ -73,7 +73,7 @@ void RobotTask()
 
 #ifdef GIMBAL_BOARD
     GimbalTask();
-    ShootTask();
+    // ShootTask(); // 云台视觉专用分支不启用发射机构
 #endif
 
 #if defined(CHASSIS_BOARD) || defined(CHASSIS_ONLY)
