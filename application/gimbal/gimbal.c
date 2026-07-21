@@ -4,7 +4,7 @@
 #include "ins_task.h"
 #include "message_center.h"
 #include "general_def.h"
-#include "vofa.h"
+// #include "vofa.h" // 云台视觉专用分支不输出 VOFA 调试数据
 #include "bmi088.h"
 #include "bsp_dwt.h"  
 #include "motor_offline_alarm.h" // 电机离线检测
@@ -18,7 +18,7 @@ static Gimbal_Upload_Data_s gimbal_feedback_data; // 回传给cmd的云台状态
 static Gimbal_Ctrl_Cmd_s gimbal_cmd_recv;         // 来自cmd的控制信息
 
 static Chassis_Upload_Data_s chassis_real_speed;
-static Subscriber_t *chassis_speed_sub; // 底盘反馈信息订阅者
+// static Subscriber_t *chassis_speed_sub; // 云台视觉专用分支不订阅底盘反馈
 
 static float yaw_speed_feedforward = 0.0f;    // yaw速度前馈 (本地微分计算)
 static float pitch_speed_feedforward = 0.0f;  // pitch速度前馈 (本地微分计算)
@@ -188,7 +188,7 @@ void GimbalInit()
 
     gimbal_pub = PubRegister("gimbal_feed", sizeof(Gimbal_Upload_Data_s));
     gimbal_sub = SubRegister("gimbal_cmd", sizeof(Gimbal_Ctrl_Cmd_s));
-    chassis_speed_sub = SubRegister("chassis_feed", sizeof(Chassis_Upload_Data_s));
+    // chassis_speed_sub = SubRegister("chassis_feed", sizeof(Chassis_Upload_Data_s)); // 云台视觉专用分支不订阅底盘反馈
     
     // 云台电机离线检测配置
     MotorOfflineAlarmConfig_t gimbal_alarm_cfg = {
@@ -211,7 +211,7 @@ void GimbalTask()
     // 获取云台控制数据
     // 后续增加未收到数据的处理
     SubGetMessage(gimbal_sub, &gimbal_cmd_recv);
-    SubGetMessage(chassis_speed_sub, &chassis_real_speed);
+    // SubGetMessage(chassis_speed_sub, &chassis_real_speed); // 云台视觉专用分支不接收底盘反馈
     // @todo:现在已不再需要电机反馈,实际上可以始终使用IMU的姿态数据来作为云台的反馈,yaw电机的offset只是用来跟随底盘
     // 根据控制模式进行电机反馈切换和过渡,视觉模式在robot_cmd模块就已经设置好,gimbal只看yaw_ref和pitch_ref
     switch (gimbal_cmd_recv.gimbal_mode)
@@ -386,7 +386,7 @@ void GimbalTask()
     // 1) yaw运动前馈辨识: CH0~CH6
     //VOFA(0, gimba_IMU_data->YawTotalAngle, gimba_IMU_data->Gyro[2], gimbal_wz_acc_filtered, yaw_ref_speed_rad, yaw_ref_acc_rad, yaw_motion_current_feedforward, (float)yaw_motor->measure.real_current);
     // 2) yaw小陀螺补偿辨识: CH0~CH5
-    VOFA(0, gimba_IMU_data->YawTotalAngle, chassis_real_speed.chassis_wz_imu, chassis_wz_acc_filtered, yaw_spin_current_feedforward, (float)yaw_motor->measure.real_current, yaw_current_feedforward);
+    // VOFA(0, gimba_IMU_data->YawTotalAngle, chassis_real_speed.chassis_wz_imu, chassis_wz_acc_filtered, yaw_spin_current_feedforward, (float)yaw_motor->measure.real_current, yaw_current_feedforward); // 云台视觉专用分支不输出调试数据
     // 3) pitch前馈辨识: CH0~CH6
     //VOFA(0, gimba_IMU_data->Pitch, gimba_IMU_data->Gyro[1], pitch_w_acc_filtered, pitch_speed_rad, pitch_acc_rad, pitch_current_feedforward, (float)pitch_motor->measure.real_current);
     // 推送消息

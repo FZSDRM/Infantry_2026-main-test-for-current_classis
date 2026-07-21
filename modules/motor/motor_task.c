@@ -14,12 +14,11 @@ void MotorControlTask()
     DJIMotorControl();
 
     /* 如果有对应的电机则取消注释,可以加入条件编译或者register对应的idx判断是否注册了电机 */
-    LKMotorControl();
+    // LKMotorControl(); // 云台视觉专用分支仅运行 DJI 云台电机
 
-    HTMotorControl();
+    // HTMotorControl(); // 云台视觉专用分支仅运行 DJI 云台电机
 
-    ServeoMotorControl();
+    // ServeoMotorControl(); // 云台视觉专用分支不运行舵机
 
     //StepMotorControl();
 }
-

@@ -3,7 +3,7 @@
 #include "bsp_dwt.h"
 #include "bsp_usb.h"
 #include "bsp_buzzer.h"
-#include "bsp_led.h"
+// #include "bsp_led.h" // 云台视觉专用分支不初始化 LED
 #include "bsp_temperature.h"
 
 // CAN和串口会在注册实例的时候自动初始化,不注册不初始化
@@ -15,7 +15,7 @@ void BSPInit()
 
 
     // legacy support，待删除,将在实现了led/tempctrl/buzzer的module之后移动到app层进行XXXRegister()
-    LEDInit();
+    // LEDInit(); // 云台视觉专用分支不初始化 LED
     IMUTempInit();
     BuzzerInit();
 }
