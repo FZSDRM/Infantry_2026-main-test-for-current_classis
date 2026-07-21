@@ -146,7 +146,7 @@ void MX_FREERTOS_Init(void) {
   osThreadDef(robottask, StartROBOTTASK, osPriorityAboveNormal, 0, 1024);
   robotTaskHandle = osThreadCreate(osThread(robottask), NULL);
 
-  osThreadDef(uitask, StartUITASK, osPriorityNormal, 0, 512);
+  // osThreadDef(uitask, StartUITASK, osPriorityNormal, 0, 512); // 云台视觉专用分支不定义裁判 UI 任务
   // uiTaskHandle = osThreadCreate(osThread(uitask), NULL); // 云台视觉专用分支不启动裁判 UI 任务
 
   /* USER CODE END RTOS_THREADS */

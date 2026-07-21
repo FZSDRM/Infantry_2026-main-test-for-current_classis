@@ -34,6 +34,8 @@ foreach ($entry in $disabledTokenSequences) {
 
 Assert-CBodyTokenSequenceState -RelativePath 'Src/freertos.c' -BodyFunction 'MX_FREERTOS_Init' `
     -CodeText 'uiTaskHandle = osThreadCreate(osThread(uitask), NULL);' -ShouldBePresent $false
+Assert-CBodyTokenSequenceState -RelativePath 'Src/freertos.c' -BodyFunction 'MX_FREERTOS_Init' `
+    -CodeText 'osThreadDef(uitask, StartUITASK, osPriorityNormal, 0, 512);' -ShouldBePresent $false
 
 $requiredBodyTokenSequences = @(
     [PSCustomObject]@{ Path = 'Src/freertos.c'; Body = 'MX_FREERTOS_Init'; Code = 'defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);' }
