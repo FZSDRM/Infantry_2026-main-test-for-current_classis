@@ -57,12 +57,15 @@
 - 速度目标由状态机产生，并在硬件适配层再次钳制到 `[-10, +10]°/s`。
 - 速度 PID 最大输出保守限制为 3000 CAN 原始值。
 - 非当前电机保持 `DJIMotorStop()`，不参与闭环输出。
+- 新注册电机必须收到至少一帧对应 CAN 反馈后才可视为可扫描；daemon 的初始 ONLINE 状态不能单独触发运动。
 
 `gimbal.c` 的扫描分支仍初始化 INS 并发布 `gimbal_feed`，保证 RobotCMD 与视觉姿态数据链继续获得有效云台 IMU 数据。ID1 的单圈角度用于兼容现有 `yaw_motor_single_round_angle` 字段。
 
 ## 安全修正
 
 现有 `DJIMotorControl()` 在处理停止电机时，从单个电机槽位起始位置清零 16 字节，超过一个 8 字节 CAN 数据帧。扫描模式会频繁停止多个电机，因此必须把该清零长度修正为当前电机槽位的 2 字节，避免越界和误清其他内存。
+
+DJI 电机实例增加 `feedback_received` 标志，初始化为 false，在 `DecodeDJIMotor()` 成功解包首帧后置 true。扫描分支只把 `feedback_received && DJIMotorIsOnline()` 传给状态机，避免上电时 daemon 默认 ONLINE 导致无反馈盲动。
 
 ## 测试策略
 
