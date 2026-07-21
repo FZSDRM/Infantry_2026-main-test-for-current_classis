@@ -2,6 +2,21 @@
 
 #include <math.h>
 
+#define GM6020_SCAN_MAX_MOTOR_COUNT 7u
+
+static bool ConfigIsValid(const GM6020IDScanLogicConfig *config)
+{
+    return config->motor_count >= 1u &&
+           config->motor_count <= GM6020_SCAN_MAX_MOTOR_COUNT &&
+           isfinite(config->max_speed_dps) && config->max_speed_dps > 0.0f &&
+           isfinite(config->travel_deg) && config->travel_deg > 0.0f &&
+           isfinite(config->origin_tolerance_deg) &&
+           config->origin_tolerance_deg >= 0.0f &&
+           config->origin_tolerance_deg < config->travel_deg &&
+           config->online_timeout_ms > 0u && config->motion_timeout_ms > 0u &&
+           config->settle_ms > 0u;
+}
+
 static void ResetRuntime(GM6020IDScanLogic *context, uint32_t now_ms)
 {
     context->state = GM6020_SCAN_DISARMED;
@@ -64,6 +79,7 @@ void GM6020IDScanLogicInit(GM6020IDScanLogic *context,
                            const GM6020IDScanLogicConfig *config)
 {
     context->config = *config;
+    context->valid = ConfigIsValid(config);
     ResetRuntime(context, 0u);
 }
 
@@ -75,6 +91,13 @@ GM6020IDScanOutput GM6020IDScanLogicStep(GM6020IDScanLogic *context,
         .motor_index = context->motor_index,
         .speed_ref_dps = 0.0f,
     };
+
+    if (!context->valid) {
+        ResetRuntime(context, input->now_ms);
+        output.action = GM6020_SCAN_ACTION_STOP_ALL;
+        output.motor_index = 0u;
+        return output;
+    }
 
     if (!input->enabled) {
         ResetRuntime(context, input->now_ms);
@@ -124,8 +147,9 @@ GM6020IDScanOutput GM6020IDScanLogicStep(GM6020IDScanLogic *context,
                 HasElapsed(input->now_ms, context->state_entry_ms,
                            context->config.motion_timeout_ms)) {
                 StopAndAdvance(context, &output, input->now_ms);
-            } else if (fabsf(input->angle_deg - context->start_angle_deg) <=
-                       context->config.origin_tolerance_deg) {
+            } else if (input->angle_deg <=
+                       context->start_angle_deg +
+                           context->config.origin_tolerance_deg) {
                 context->state = GM6020_SCAN_SETTLE;
                 context->state_entry_ms = input->now_ms;
                 output.action = GM6020_SCAN_ACTION_STOP_CURRENT;
@@ -145,6 +169,12 @@ GM6020IDScanOutput GM6020IDScanLogicStep(GM6020IDScanLogic *context,
 
         case GM6020_SCAN_COMPLETE:
             output.action = GM6020_SCAN_ACTION_STOP_ALL;
+            break;
+
+        default:
+            context->state = GM6020_SCAN_COMPLETE;
+            output.action = GM6020_SCAN_ACTION_STOP_ALL;
+            output.speed_ref_dps = 0.0f;
             break;
     }
 

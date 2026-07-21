@@ -32,6 +32,7 @@ typedef struct {
 
 typedef struct {
     GM6020IDScanLogicConfig config;
+    bool valid;
     GM6020IDScanState state;
     uint8_t motor_index;
     uint32_t state_entry_ms;
@@ -47,6 +48,7 @@ typedef struct {
 
 typedef struct {
     GM6020IDScanAction action;
+    /* STOP_CURRENT names the old motor to stop, even if context has advanced. */
     uint8_t motor_index;
     float speed_ref_dps;
 } GM6020IDScanOutput;
