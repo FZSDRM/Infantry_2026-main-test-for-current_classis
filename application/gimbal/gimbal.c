@@ -103,7 +103,8 @@ void GimbalTask()
     SubGetMessage(gimbal_sub, &gimbal_cmd_recv);
     selected_motor = scan_logic.motor_index;
     input.enabled = gimbal_cmd_recv.gimbal_mode != GIMBAL_ZERO_FORCE;
-    input.online = DJIMotorIsOnline(scan_motors[selected_motor]);
+    input.online = DJIMotorHasFeedback(scan_motors[selected_motor]) &&
+                   DJIMotorIsOnline(scan_motors[selected_motor]);
     input.now_ms = (uint32_t)DWT_GetTimeline_ms();
     input.angle_deg = scan_motors[selected_motor]->measure.total_angle;
     output = GM6020IDScanLogicStep(&scan_logic, &input);

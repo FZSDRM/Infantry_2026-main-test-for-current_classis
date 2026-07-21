@@ -321,6 +321,7 @@ static void DecodeDJIMotor(CANInstance *_instance)
     else if (measure->ecd - measure->last_ecd < -4096)
         measure->total_round++;
     measure->total_angle = measure->total_round * 360 + measure->angle_single_round;
+    motor->feedback_received = 1u;
 }
 
 // 电机初始化,返回一个电机实例
@@ -537,6 +538,14 @@ uint8_t DJIMotorIsOnline(void *motor)
     if (m == NULL || m->motor_daemon == NULL)
         return 0;
     return DaemonIsOnline(m->motor_daemon);
+}
+
+uint8_t DJIMotorHasFeedback(void *motor)
+{
+    DJIMotorInstance *m = (DJIMotorInstance *)motor;
+    if (m == NULL)
+        return 0u;
+    return m->feedback_received;
 }
 
 void ChassisPowerSet(float power)

@@ -80,6 +80,7 @@ typedef struct
 
     Motor_Type_e motor_type;        // 电机类型
     Motor_Working_Type_e stop_flag; // 启停标志
+    uint8_t feedback_received;      // 至少成功解包过一帧电机反馈
     float real_output;
 } DJIMotorInstance;
 
@@ -178,5 +179,12 @@ float DJIMotorGetPowerLimitCoef(void);
  * @return uint8_t 1=在线, 0=离线
  */
 uint8_t DJIMotorIsOnline(void *motor);
+
+/**
+ * @brief 检查电机是否至少收到过一帧有效反馈
+ * @param motor 电机实例指针
+ * @return uint8_t 1=已收到, 0=未收到或实例为空
+ */
+uint8_t DJIMotorHasFeedback(void *motor);
 
 #endif // !DJI_MOTOR_H

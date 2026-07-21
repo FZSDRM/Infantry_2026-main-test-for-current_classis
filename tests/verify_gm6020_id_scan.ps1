@@ -43,7 +43,7 @@ $requiredTokenSequences = @(
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'gimbal_pub = PubRegister("gimbal_feed", sizeof(Gimbal_Upload_Data_s));' }
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'gimbal_sub = SubRegister("gimbal_cmd", sizeof(Gimbal_Ctrl_Cmd_s));' }
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'input.enabled = gimbal_cmd_recv.gimbal_mode != GIMBAL_ZERO_FORCE;' }
-    [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'input.online = DJIMotorIsOnline(scan_motors[selected_motor]);' }
+    [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'input.online = DJIMotorHasFeedback(scan_motors[selected_motor]) && DJIMotorIsOnline(scan_motors[selected_motor]);' }
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'input.angle_deg = scan_motors[selected_motor]->measure.total_angle;' }
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'case GM6020_SCAN_ACTION_STOP_ALL:' }
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'case GM6020_SCAN_ACTION_STOP_CURRENT:' }
@@ -53,7 +53,10 @@ $requiredTokenSequences = @(
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'gimbal_feedback_data.gimbal_imu_data = *gimba_IMU_data;' }
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'gimbal_feedback_data.yaw_motor_single_round_angle = scan_motors[0]->measure.angle_single_round;' }
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Code = 'PubPushMessage(gimbal_pub, (void *)&gimbal_feedback_data);' }
+    [PSCustomObject]@{ Path = 'modules/motor/DJImotor/dji_motor.h'; Code = 'uint8_t feedback_received;' }
+    [PSCustomObject]@{ Path = 'modules/motor/DJImotor/dji_motor.h'; Code = 'uint8_t DJIMotorHasFeedback(void *motor);' }
     [PSCustomObject]@{ Path = 'modules/motor/DJImotor/dji_motor.c'; Code = 'memset(sender_assignment[group].tx_buff + 2 * num, 0, 2u);' }
+    [PSCustomObject]@{ Path = 'modules/motor/DJImotor/dji_motor.c'; Code = 'memset(instance, 0, sizeof(DJIMotorInstance));' }
 )
 
 foreach ($entry in $requiredTokenSequences) {
@@ -62,6 +65,20 @@ foreach ($entry in $requiredTokenSequences) {
 
 Assert-CTokenSequenceState -RelativePath 'modules/motor/DJImotor/dji_motor.c' `
     -CodeText 'memset(sender_assignment[group].tx_buff + 2 * num, 0, 16u);' -ShouldBePresent $false
+Assert-CTokenSequenceState -RelativePath 'application/gimbal/gimbal.c' `
+    -CodeText 'input.online = DJIMotorIsOnline(scan_motors[selected_motor]);' -ShouldBePresent $false
+Assert-CBodyTokenSequenceState -RelativePath 'modules/motor/DJImotor/dji_motor.c' -BodyFunction 'DecodeDJIMotor' `
+    -CodeText 'motor->feedback_received = 1u;' -ShouldBePresent $true
+Assert-CBodyTokenSequenceState -RelativePath 'modules/motor/DJImotor/dji_motor.c' -BodyFunction 'DJIMotorHasFeedback' `
+    -CodeText 'if (m == NULL) return 0u;' -ShouldBePresent $true
+Assert-CBodyTokenSequenceState -RelativePath 'modules/motor/DJImotor/dji_motor.c' -BodyFunction 'DJIMotorHasFeedback' `
+    -CodeText 'return m->feedback_received;' -ShouldBePresent $true
+
+$djiMotorSource = Get-Content -LiteralPath (Join-Path $workspaceRoot 'modules/motor/DJImotor/dji_motor.c') -Raw -Encoding UTF8
+$feedbackSetMatches = @([regex]::Matches($djiMotorSource, 'feedback_received\s*=\s*1u\s*;'))
+if ($feedbackSetMatches.Count -ne 1) {
+    throw "feedback_received must be set exactly once, inside DecodeDJIMotor; found $($feedbackSetMatches.Count) assignments."
+}
 
 Assert-TextMatch -RelativePath 'application/gimbal/gimbal.c' `
     -Pattern '(?s)#ifdef\s+GM6020_ID_SCAN_MODE.*?void\s+GimbalInit\s*\([^)]*\).*?void\s+GimbalTask\s*\([^)]*\).*?#else.*?void\s+GimbalInit\s*\([^)]*\).*?void\s+GimbalTask\s*\([^)]*\).*?#endif' `
