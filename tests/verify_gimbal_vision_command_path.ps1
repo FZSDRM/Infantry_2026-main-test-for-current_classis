@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 
 $workspaceRoot = Split-Path -Parent $PSScriptRoot
 $sourceTokenCache = @{}
+$functionBodyTokenCache = @{}
 
 function Remove-CLineSplices {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$SourceText)
@@ -46,7 +47,7 @@ function Get-ActiveCTokens {
                 $index++
             }
             if (-not $foundBlockCommentEnd) {
-                $index = $source.Length
+                throw 'Unterminated C block comment.'
             }
             continue
         }
@@ -89,6 +90,7 @@ function Get-ActiveCTokens {
             $quote = $character
             $kind = if ($quote -eq [char]34) { 'StringLiteral' } else { 'CharacterLiteral' }
             $literal = [System.Text.StringBuilder]::new()
+            $foundLiteralEnd = $false
             [void]$literal.Append($character)
             $index++
 
@@ -103,8 +105,13 @@ function Get-ActiveCTokens {
                     continue
                 }
                 if ($character -eq $quote) {
+                    $foundLiteralEnd = $true
                     break
                 }
+            }
+
+            if (-not $foundLiteralEnd) {
+                throw "Unterminated C $kind."
             }
 
             $tokens.Add([PSCustomObject]@{
@@ -136,6 +143,95 @@ function Get-SourceTokens {
     return $sourceTokenCache[$RelativePath]
 }
 
+function Get-CFunctionBodyTokens {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Tokens,
+        [Parameter(Mandatory)][string]$FunctionName
+    )
+
+    for ($nameIndex = 0; $nameIndex -lt $Tokens.Count; $nameIndex++) {
+        $nameToken = $Tokens[$nameIndex]
+        if ($nameToken.Kind -ne 'Identifier' -or $nameToken.Text -cne $FunctionName) {
+            continue
+        }
+
+        $parameterStart = $nameIndex + 1
+        if ($parameterStart -ge $Tokens.Count -or $Tokens[$parameterStart].Text -ne '(') {
+            continue
+        }
+
+        $parenthesisDepth = 0
+        $parameterEnd = -1
+        for ($tokenIndex = $parameterStart; $tokenIndex -lt $Tokens.Count; $tokenIndex++) {
+            if ($Tokens[$tokenIndex].Text -eq '(') {
+                $parenthesisDepth++
+            }
+            elseif ($Tokens[$tokenIndex].Text -eq ')') {
+                $parenthesisDepth--
+                if ($parenthesisDepth -eq 0) {
+                    $parameterEnd = $tokenIndex
+                    break
+                }
+            }
+        }
+
+        if ($parameterEnd -lt 0) {
+            throw "Unbalanced parameter list while locating C function: $FunctionName"
+        }
+
+        $bodyStart = $parameterEnd + 1
+        if ($bodyStart -ge $Tokens.Count -or $Tokens[$bodyStart].Text -ne '{') {
+            continue
+        }
+
+        $braceDepth = 0
+        $bodyTokens = [System.Collections.Generic.List[object]]::new()
+        for ($tokenIndex = $bodyStart; $tokenIndex -lt $Tokens.Count; $tokenIndex++) {
+            $token = $Tokens[$tokenIndex]
+            if ($token.Text -eq '{') {
+                $braceDepth++
+                if ($braceDepth -gt 1) {
+                    $bodyTokens.Add($token)
+                }
+                continue
+            }
+            if ($token.Text -eq '}') {
+                $braceDepth--
+                if ($braceDepth -eq 0) {
+                    return $bodyTokens
+                }
+                if ($braceDepth -lt 0) {
+                    throw "Unbalanced function body while locating C function: $FunctionName"
+                }
+                $bodyTokens.Add($token)
+                continue
+            }
+            if ($braceDepth -gt 0) {
+                $bodyTokens.Add($token)
+            }
+        }
+
+        throw "Unterminated function body while locating C function: $FunctionName"
+    }
+
+    throw "C function definition not found: $FunctionName"
+}
+
+function Get-SourceFunctionBodyTokens {
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)][string]$FunctionName
+    )
+
+    $cacheKey = "${RelativePath}::${FunctionName}"
+    if (-not $functionBodyTokenCache.ContainsKey($cacheKey)) {
+        $sourceTokens = @(Get-SourceTokens -RelativePath $RelativePath)
+        $functionBodyTokenCache[$cacheKey] = @(Get-CFunctionBodyTokens -Tokens $sourceTokens -FunctionName $FunctionName)
+    }
+
+    return $functionBodyTokenCache[$cacheKey]
+}
+
 function Test-CIdentifierPresent {
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Tokens,
@@ -150,7 +246,7 @@ function Test-CIdentifierPresent {
     return $false
 }
 
-function Test-CFunctionCall {
+function Test-CBodyFunctionCall {
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Tokens,
         [Parameter(Mandatory)][string]$FunctionName
@@ -159,6 +255,20 @@ function Test-CFunctionCall {
     for ($index = 0; $index -lt $Tokens.Count; $index++) {
         $token = $Tokens[$index]
         if ($token.Kind -ne 'Identifier' -or $token.Text -cne $FunctionName) {
+            continue
+        }
+
+        $declarationPrefixes = @(
+            'auto', 'char', 'const', 'double', 'enum', 'extern', 'float',
+            'inline', 'int', 'long', 'register', 'short', 'signed', 'static',
+            'struct', 'typedef', 'union', 'unsigned', 'void', 'volatile', '_Bool',
+            'define'
+        )
+        if ($index -gt 0 -and $Tokens[$index - 1].Kind -eq 'Identifier' -and
+            $Tokens[$index - 1].Text -cin $declarationPrefixes) {
+            continue
+        }
+        if ($index -gt 0 -and $Tokens[$index - 1].Text -eq '*') {
             continue
         }
 
@@ -244,13 +354,14 @@ function Assert-ContractState {
 function Assert-CFunctionCallState {
     param(
         [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)][string]$BodyFunction,
         [Parameter(Mandatory)][string]$FunctionName,
         [Parameter(Mandatory)][bool]$ShouldBePresent
     )
 
-    $tokens = @(Get-SourceTokens -RelativePath $RelativePath)
-    $isPresent = Test-CFunctionCall -Tokens $tokens -FunctionName $FunctionName
-    Assert-ContractState -RelativePath $RelativePath -Description "call to $FunctionName" -IsPresent $isPresent -ShouldBePresent $ShouldBePresent
+    $bodyTokens = @(Get-SourceFunctionBodyTokens -RelativePath $RelativePath -FunctionName $BodyFunction)
+    $isPresent = Test-CBodyFunctionCall -Tokens $bodyTokens -FunctionName $FunctionName
+    Assert-ContractState -RelativePath $RelativePath -Description "call to $FunctionName in $BodyFunction" -IsPresent $isPresent -ShouldBePresent $ShouldBePresent
 }
 
 function Assert-CIdentifierState {
@@ -278,18 +389,81 @@ function Assert-CTokenSequenceState {
     Assert-ContractState -RelativePath $RelativePath -Description $CodeText -IsPresent $isPresent -ShouldBePresent $ShouldBePresent
 }
 
+function Assert-CBodyTokenSequenceState {
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)][string]$BodyFunction,
+        [Parameter(Mandatory)][string]$CodeText,
+        [Parameter(Mandatory)][bool]$ShouldBePresent
+    )
+
+    $bodyTokens = @(Get-SourceFunctionBodyTokens -RelativePath $RelativePath -FunctionName $BodyFunction)
+    $patternTokens = @(Get-ActiveCTokens -SourceText $CodeText)
+    $isPresent = Test-CTokenSequence -Tokens $bodyTokens -PatternTokens $patternTokens
+    Assert-ContractState -RelativePath $RelativePath -Description "$CodeText in $BodyFunction" -IsPresent $isPresent -ShouldBePresent $ShouldBePresent
+}
+
 # Self-probes exercise the same tokenizer and matchers used by the contract tables.
-if (Test-CFunctionCall -Tokens @(Get-ActiveCTokens -SourceText 'const char *s = "RobotCMDInit();";') -FunctionName 'RobotCMDInit') {
+$functionContextProbe = @'
+#define RequiredCall() replacement
+void RequiredCall(void);
+void RequiredCall(void) {}
+void EmptyBody(void) {
+    void RequiredCall(void);
+    #define RequiredCall() replacement
+}
+void CallingBody(void) { RequiredCall(); }
+'@
+$functionContextTokens = @(Get-ActiveCTokens -SourceText $functionContextProbe)
+$emptyBodyTokens = @(Get-CFunctionBodyTokens -Tokens $functionContextTokens -FunctionName 'EmptyBody')
+if (Test-CBodyFunctionCall -Tokens $emptyBodyTokens -FunctionName 'RequiredCall') {
+    throw 'Self-test failed: a macro, prototype, or definition was treated as a body call.'
+}
+$callingBodyTokens = @(Get-CFunctionBodyTokens -Tokens $functionContextTokens -FunctionName 'CallingBody')
+if (-not (Test-CBodyFunctionCall -Tokens $callingBodyTokens -FunctionName 'RequiredCall')) {
+    throw 'Self-test failed: an actual function-body call was not detected.'
+}
+
+$nonCallFragments = @(
+    '#define RequiredCall() replacement'
+    'void RequiredCall(void);'
+    'void RequiredCall(void) {}'
+)
+foreach ($nonCallFragment in $nonCallFragments) {
+    if (Test-CBodyFunctionCall -Tokens @(Get-ActiveCTokens -SourceText $nonCallFragment) -FunctionName 'RequiredCall') {
+        throw "Self-test failed: a macro, prototype, or definition was treated as a call: $nonCallFragment"
+    }
+}
+
+$unterminatedInputs = @(
+    '/* unterminated block comment'
+    '"unterminated string'
+    "'unterminated character"
+)
+foreach ($unterminatedInput in $unterminatedInputs) {
+    $lexerThrew = $false
+    try {
+        @(Get-ActiveCTokens -SourceText $unterminatedInput) | Out-Null
+    }
+    catch {
+        $lexerThrew = $true
+    }
+    if (-not $lexerThrew) {
+        throw "Self-test failed: lexer accepted unterminated input: $unterminatedInput"
+    }
+}
+
+if (Test-CBodyFunctionCall -Tokens @(Get-ActiveCTokens -SourceText 'const char *s = "RobotCMDInit();";') -FunctionName 'RobotCMDInit') {
     throw 'Self-test failed: a function name inside a string literal was treated as an active call.'
 }
-if (Test-CFunctionCall -Tokens @(Get-ActiveCTokens -SourceText 'DoNotShootInit();') -FunctionName 'ShootInit') {
+if (Test-CBodyFunctionCall -Tokens @(Get-ActiveCTokens -SourceText 'DoNotShootInit();') -FunctionName 'ShootInit') {
     throw 'Self-test failed: an identifier substring was treated as the disabled function.'
 }
-if (-not (Test-CFunctionCall -Tokens @(Get-ActiveCTokens -SourceText '(ShootInit)();') -FunctionName 'ShootInit')) {
+if (-not (Test-CBodyFunctionCall -Tokens @(Get-ActiveCTokens -SourceText '(ShootInit)();') -FunctionName 'ShootInit')) {
     throw 'Self-test failed: a parenthesized disabled function call was not detected.'
 }
 $continuedLineCommentProbe = '// comment \' + "`r`n" + 'RobotCMDInit();'
-if (Test-CFunctionCall -Tokens @(Get-ActiveCTokens -SourceText $continuedLineCommentProbe) -FunctionName 'RobotCMDInit') {
+if (Test-CBodyFunctionCall -Tokens @(Get-ActiveCTokens -SourceText $continuedLineCommentProbe) -FunctionName 'RobotCMDInit') {
     throw 'Self-test failed: a line-spliced comment exposed a required function call.'
 }
 
@@ -298,13 +472,13 @@ $commentedRequiredProbe = @'
 // GimbalInit();
 '@
 $commentedRequiredTokens = @(Get-ActiveCTokens -SourceText $commentedRequiredProbe)
-if (Test-CFunctionCall -Tokens $commentedRequiredTokens -FunctionName 'RobotCMDInit') {
+if (Test-CBodyFunctionCall -Tokens $commentedRequiredTokens -FunctionName 'RobotCMDInit') {
     throw 'Self-test failed: a block-commented required call was treated as active code.'
 }
-if (Test-CFunctionCall -Tokens $commentedRequiredTokens -FunctionName 'GimbalInit') {
+if (Test-CBodyFunctionCall -Tokens $commentedRequiredTokens -FunctionName 'GimbalInit') {
     throw 'Self-test failed: a line-commented required call was treated as active code.'
 }
-if (-not (Test-CFunctionCall -Tokens @(Get-ActiveCTokens -SourceText 'ShootInit ();') -FunctionName 'ShootInit')) {
+if (-not (Test-CBodyFunctionCall -Tokens @(Get-ActiveCTokens -SourceText 'ShootInit ();') -FunctionName 'ShootInit')) {
     throw 'Self-test failed: whitespace variation bypassed disabled-call detection.'
 }
 if (-not (Test-CIdentifierPresent -Tokens @(Get-ActiveCTokens -SourceText '/* ignored */x') -Identifier 'x')) {
@@ -313,15 +487,15 @@ if (-not (Test-CIdentifierPresent -Tokens @(Get-ActiveCTokens -SourceText '/* ig
 Write-Output 'C tokenizer self-probes passed.'
 
 $disabledCalls = @(
-    [PSCustomObject]@{ Path = 'application/robot.c'; Call = 'ShootInit' }
-    [PSCustomObject]@{ Path = 'application/robot.c'; Call = 'ShootTask' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Call = 'CANCommInit' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Call = 'CANCommGet' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Call = 'CANCommSend' }
+    [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotInit'; Call = 'ShootInit' }
+    [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotTask'; Call = 'ShootTask' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Call = 'CANCommInit' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Call = 'CANCommGet' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Call = 'CANCommSend' }
 )
 
 foreach ($entry in $disabledCalls) {
-    Assert-CFunctionCallState -RelativePath $entry.Path -FunctionName $entry.Call -ShouldBePresent $false
+    Assert-CFunctionCallState -RelativePath $entry.Path -BodyFunction $entry.Body -FunctionName $entry.Call -ShouldBePresent $false
 }
 
 $disabledIdentifiers = @(
@@ -345,29 +519,43 @@ foreach ($entry in $disabledTokenSequences) {
     Assert-CTokenSequenceState -RelativePath $entry.Path -CodeText $entry.Code -ShouldBePresent $false
 }
 
+$disabledBodyTokenSequences = @(
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Code = 'shoot_cmd_pub = PubRegister("shoot_cmd", sizeof(Shoot_Ctrl_Cmd_s));' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Code = 'shoot_feed_sub = SubRegister("shoot_feed", sizeof(Shoot_Upload_Data_s));' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Code = 'cmd_can_comm = CANCommInit(&comm_conf);' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'chassis_fetch_data = *(Chassis_Upload_Data_s *)CANCommGet(cmd_can_comm);' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'SubGetMessage(shoot_feed_sub, &shoot_fetch_data);' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'CANCommSend(cmd_can_comm, (void *)&chassis_cmd_send);' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'PubPushMessage(shoot_cmd_pub, (void *)&shoot_cmd_send);' }
+)
+
+foreach ($entry in $disabledBodyTokenSequences) {
+    Assert-CBodyTokenSequenceState -RelativePath $entry.Path -BodyFunction $entry.Body -CodeText $entry.Code -ShouldBePresent $false
+}
+
 $requiredCalls = @(
-    [PSCustomObject]@{ Path = 'application/robot.c'; Call = 'RobotCMDInit' }
-    [PSCustomObject]@{ Path = 'application/robot.c'; Call = 'GimbalInit' }
-    [PSCustomObject]@{ Path = 'application/robot.c'; Call = 'RobotCMDTask' }
-    [PSCustomObject]@{ Path = 'application/robot.c'; Call = 'GimbalTask' }
+    [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotInit'; Call = 'RobotCMDInit' }
+    [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotInit'; Call = 'GimbalInit' }
+    [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotTask'; Call = 'RobotCMDTask' }
+    [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotTask'; Call = 'GimbalTask' }
 )
 
 foreach ($entry in $requiredCalls) {
-    Assert-CFunctionCallState -RelativePath $entry.Path -FunctionName $entry.Call -ShouldBePresent $true
+    Assert-CFunctionCallState -RelativePath $entry.Path -BodyFunction $entry.Body -FunctionName $entry.Call -ShouldBePresent $true
 }
 
 $requiredTokenSequences = @(
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Code = 'RemoteControlInit(&huart3)' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Code = 'TransferImageInit(&huart6)' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Code = 'VisionInit(&huart1)' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Code = 'RemoteControlSet();' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Code = 'ImageMouseKeySet();' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Code = 'gimbal_cmd_send.gimbal_mode = GIMBAL_ZERO_FORCE;' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Code = 'PubPushMessage(gimbal_cmd_pub, (void *)&gimbal_cmd_send);' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Code = 'RemoteControlInit(&huart3)' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Code = 'TransferImageInit(&huart6)' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Code = 'VisionInit(&huart1)' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'RemoteControlSet();' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'ImageMouseKeySet();' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'gimbal_cmd_send.gimbal_mode = GIMBAL_ZERO_FORCE;' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'PubPushMessage(gimbal_cmd_pub, (void *)&gimbal_cmd_send);' }
 )
 
 foreach ($entry in $requiredTokenSequences) {
-    Assert-CTokenSequenceState -RelativePath $entry.Path -CodeText $entry.Code -ShouldBePresent $true
+    Assert-CBodyTokenSequenceState -RelativePath $entry.Path -BodyFunction $entry.Body -CodeText $entry.Code -ShouldBePresent $true
 }
 
 Write-Output 'Gimbal/vision command-path contract passed.'
