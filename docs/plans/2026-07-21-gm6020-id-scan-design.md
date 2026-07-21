@@ -65,7 +65,7 @@
 
 现有 `DJIMotorControl()` 在处理停止电机时，从单个电机槽位起始位置清零 16 字节，超过一个 8 字节 CAN 数据帧。扫描模式会频繁停止多个电机，因此必须把该清零长度修正为当前电机槽位的 2 字节，避免越界和误清其他内存。
 
-DJI 电机实例增加 `feedback_received` 标志，初始化为 false，在 `DecodeDJIMotor()` 成功解包首帧后置 true。扫描分支只把 `feedback_received && DJIMotorIsOnline()` 传给状态机，避免上电时 daemon 默认 ONLINE 导致无反馈盲动。
+DJI 电机实例增加 `feedback_received` 标志，初始化为 false。`DecodeDJIMotor()` 只接受标准的 8 字节反馈帧；短 DLC 帧不喂 daemon、不解析、也不置首帧标志。成功解包首帧后才置 true。扫描分支只把 `feedback_received && DJIMotorIsOnline()` 传给状态机，避免上电时 daemon 默认 ONLINE 或畸形短帧导致无反馈盲动。
 
 ## 测试策略
 
