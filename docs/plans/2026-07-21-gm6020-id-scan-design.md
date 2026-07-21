@@ -9,7 +9,7 @@
 - 保留现有遥控器、图传遥控器和视觉通信链路。
 - 只有原控制逻辑解除 `GIMBAL_ZERO_FORCE` 后才启动扫描。
 - 遥控器失能时立即停止所有扫描电机并复位扫描状态。
-- 不改动或提交用户当前在 `application/gimbal/gimbal.c` 中注释 `MotorOfflineAlarmTask()` 的未提交修改。
+- 保留用户当前在 `application/gimbal/gimbal.c` 中注释 `MotorOfflineAlarmTask()` 的修改，并让它随本功能进入版本记录。
 - 不烧录硬件；本次验证止于主机单元测试、静态契约和固件构建。
 
 ## 方案选择
@@ -24,14 +24,14 @@
 
 ## 软件结构
 
-### 独立路由
+### `gimbal.c` 内条件编译
 
-新增 `application/gimbal/gm6020_id_scan.c/.h`，并通过 `robot.c` 中的编译条件路由：
+保持 `robot.c` 对 `GimbalInit()` 和 `GimbalTask()` 的调用不变，在 `application/gimbal/gimbal.c` 内通过 `GM6020_ID_SCAN_MODE` 选择实现：
 
-- `GM6020_ID_SCAN_MODE` 开启时调用 `GM6020IDScanInit()` 和 `GM6020IDScanTask()`。
-- 宏关闭时继续调用原 `GimbalInit()` 和 `GimbalTask()`。
+- 宏开启时，`GimbalInit/GimbalTask` 编译为 ID 1–7 扫描实现。
+- 宏关闭时，编译原 yaw/pitch 云台实现。
 
-扫描功能不直接修改 `gimbal.c`，从而保留用户正在进行的本地调试改动。
+切换入口统一放在 `robot_def.h`；需要恢复正常云台控制时，只需注释 `GM6020_ID_SCAN_MODE`。
 
 ### 纯状态机
 
@@ -58,7 +58,7 @@
 - 速度 PID 最大输出保守限制为 3000 CAN 原始值。
 - 非当前电机保持 `DJIMotorStop()`，不参与闭环输出。
 
-扫描模块仍初始化 INS 并发布 `gimbal_feed`，保证 RobotCMD 与视觉姿态数据链继续获得有效云台 IMU 数据。ID1 的单圈角度用于兼容现有 `yaw_motor_single_round_angle` 字段。
+`gimbal.c` 的扫描分支仍初始化 INS 并发布 `gimbal_feed`，保证 RobotCMD 与视觉姿态数据链继续获得有效云台 IMU 数据。ID1 的单圈角度用于兼容现有 `yaw_motor_single_round_angle` 字段。
 
 ## 安全修正
 
