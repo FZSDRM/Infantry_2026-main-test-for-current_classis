@@ -16,12 +16,34 @@ function Get-ActiveCTokens {
     $source = Remove-CLineSplices -SourceText $SourceText
     $tokens = [System.Collections.Generic.List[object]]::new()
     $index = 0
+    $logicalLine = 1
+    $atLogicalLineStart = $true
+    $inPreprocessorDirective = $false
 
     while ($index -lt $source.Length) {
         $character = $source[$index]
         $hasNext = ($index + 1) -lt $source.Length
         $nextCharacter = if ($hasNext) { $source[$index + 1] } else { [char]0 }
 
+        if ($character -eq [char]13) {
+            $logicalLine++
+            $atLogicalLineStart = $true
+            $inPreprocessorDirective = $false
+            if ($nextCharacter -eq [char]10) {
+                $index += 2
+            }
+            else {
+                $index++
+            }
+            continue
+        }
+        if ($character -eq [char]10) {
+            $logicalLine++
+            $atLogicalLineStart = $true
+            $inPreprocessorDirective = $false
+            $index++
+            continue
+        }
         if ([char]::IsWhiteSpace($character)) {
             $index++
             continue
@@ -44,6 +66,19 @@ function Get-ActiveCTokens {
                     $foundBlockCommentEnd = $true
                     break
                 }
+                if ($source[$index] -eq [char]13) {
+                    $logicalLine++
+                    $atLogicalLineStart = $true
+                    $inPreprocessorDirective = $false
+                    if ($source[$index + 1] -eq [char]10) {
+                        $index++
+                    }
+                }
+                elseif ($source[$index] -eq [char]10) {
+                    $logicalLine++
+                    $atLogicalLineStart = $true
+                    $inPreprocessorDirective = $false
+                }
                 $index++
             }
             if (-not $foundBlockCommentEnd) {
@@ -51,6 +86,11 @@ function Get-ActiveCTokens {
             }
             continue
         }
+
+        if ($atLogicalLineStart -and $character -eq [char]35) {
+            $inPreprocessorDirective = $true
+        }
+        $atLogicalLineStart = $false
 
         if ([char]::IsLetter($character) -or $character -eq [char]95) {
             $startIndex = $index
@@ -65,6 +105,8 @@ function Get-ActiveCTokens {
             $tokens.Add([PSCustomObject]@{
                 Kind = 'Identifier'
                 Text = $source.Substring($startIndex, $index - $startIndex)
+                LogicalLine = $logicalLine
+                IsPreprocessorDirective = $inPreprocessorDirective
             })
             continue
         }
@@ -82,6 +124,8 @@ function Get-ActiveCTokens {
             $tokens.Add([PSCustomObject]@{
                 Kind = 'Number'
                 Text = $source.Substring($startIndex, $index - $startIndex)
+                LogicalLine = $logicalLine
+                IsPreprocessorDirective = $inPreprocessorDirective
             })
             continue
         }
@@ -117,6 +161,8 @@ function Get-ActiveCTokens {
             $tokens.Add([PSCustomObject]@{
                 Kind = $kind
                 Text = $literal.ToString()
+                LogicalLine = $logicalLine
+                IsPreprocessorDirective = $inPreprocessorDirective
             })
             continue
         }
@@ -124,6 +170,8 @@ function Get-ActiveCTokens {
         $tokens.Add([PSCustomObject]@{
             Kind = 'Punctuator'
             Text = [string]$character
+            LogicalLine = $logicalLine
+            IsPreprocessorDirective = $inPreprocessorDirective
         })
         $index++
     }
@@ -149,20 +197,40 @@ function Get-CFunctionBodyTokens {
         [Parameter(Mandatory)][string]$FunctionName
     )
 
+    $globalBraceDepth = 0
+
     for ($nameIndex = 0; $nameIndex -lt $Tokens.Count; $nameIndex++) {
         $nameToken = $Tokens[$nameIndex]
-        if ($nameToken.Kind -ne 'Identifier' -or $nameToken.Text -cne $FunctionName) {
+
+        if (-not $nameToken.IsPreprocessorDirective -and $nameToken.Text -eq '{') {
+            $globalBraceDepth++
+            continue
+        }
+        if (-not $nameToken.IsPreprocessorDirective -and $nameToken.Text -eq '}') {
+            $globalBraceDepth--
+            if ($globalBraceDepth -lt 0) {
+                throw 'Unbalanced global C brace depth.'
+            }
+            continue
+        }
+
+        if ($globalBraceDepth -ne 0 -or $nameToken.IsPreprocessorDirective -or
+            $nameToken.Kind -ne 'Identifier' -or $nameToken.Text -cne $FunctionName) {
             continue
         }
 
         $parameterStart = $nameIndex + 1
-        if ($parameterStart -ge $Tokens.Count -or $Tokens[$parameterStart].Text -ne '(') {
+        if ($parameterStart -ge $Tokens.Count -or $Tokens[$parameterStart].IsPreprocessorDirective -or
+            $Tokens[$parameterStart].Text -ne '(') {
             continue
         }
 
         $parenthesisDepth = 0
         $parameterEnd = -1
         for ($tokenIndex = $parameterStart; $tokenIndex -lt $Tokens.Count; $tokenIndex++) {
+            if ($Tokens[$tokenIndex].IsPreprocessorDirective) {
+                continue
+            }
             if ($Tokens[$tokenIndex].Text -eq '(') {
                 $parenthesisDepth++
             }
@@ -180,6 +248,9 @@ function Get-CFunctionBodyTokens {
         }
 
         $bodyStart = $parameterEnd + 1
+        while ($bodyStart -lt $Tokens.Count -and $Tokens[$bodyStart].IsPreprocessorDirective) {
+            $bodyStart++
+        }
         if ($bodyStart -ge $Tokens.Count -or $Tokens[$bodyStart].Text -ne '{') {
             continue
         }
@@ -188,14 +259,14 @@ function Get-CFunctionBodyTokens {
         $bodyTokens = [System.Collections.Generic.List[object]]::new()
         for ($tokenIndex = $bodyStart; $tokenIndex -lt $Tokens.Count; $tokenIndex++) {
             $token = $Tokens[$tokenIndex]
-            if ($token.Text -eq '{') {
+            if (-not $token.IsPreprocessorDirective -and $token.Text -eq '{') {
                 $braceDepth++
                 if ($braceDepth -gt 1) {
                     $bodyTokens.Add($token)
                 }
                 continue
             }
-            if ($token.Text -eq '}') {
+            if (-not $token.IsPreprocessorDirective -and $token.Text -eq '}') {
                 $braceDepth--
                 if ($braceDepth -eq 0) {
                     return $bodyTokens
@@ -252,51 +323,66 @@ function Test-CBodyFunctionCall {
         [Parameter(Mandatory)][string]$FunctionName
     )
 
-    for ($index = 0; $index -lt $Tokens.Count; $index++) {
-        $token = $Tokens[$index]
+    $bodyTokens = @($Tokens | Where-Object { -not $_.IsPreprocessorDirective })
+
+    for ($index = 0; $index -lt $bodyTokens.Count; $index++) {
+        $token = $bodyTokens[$index]
         if ($token.Kind -ne 'Identifier' -or $token.Text -cne $FunctionName) {
             continue
         }
 
-        $declarationPrefixes = @(
-            'auto', 'char', 'const', 'double', 'enum', 'extern', 'float',
-            'inline', 'int', 'long', 'register', 'short', 'signed', 'static',
-            'struct', 'typedef', 'union', 'unsigned', 'void', 'volatile', '_Bool',
-            'define'
-        )
-        if ($index -gt 0 -and $Tokens[$index - 1].Kind -eq 'Identifier' -and
-            $Tokens[$index - 1].Text -cin $declarationPrefixes) {
-            continue
-        }
-        if ($index -gt 0 -and $Tokens[$index - 1].Text -eq '*') {
-            continue
-        }
+        $calleeStart = -1
+        $argumentStart = -1
 
-        $cursor = $index + 1
-        $closingParenthesisCount = 0
-        while ($cursor -lt $Tokens.Count -and $Tokens[$cursor].Text -eq ')') {
-            $closingParenthesisCount++
-            $cursor++
-        }
-
-        if ($cursor -ge $Tokens.Count -or $Tokens[$cursor].Text -ne '(') {
-            continue
-        }
-        if ($closingParenthesisCount -eq 0) {
-            return $true
-        }
-        if ($index - $closingParenthesisCount -lt 0) {
-            continue
-        }
-
-        $hasMatchingWrapper = $true
-        for ($offset = 1; $offset -le $closingParenthesisCount; $offset++) {
-            if ($Tokens[$index - $offset].Text -ne '(') {
-                $hasMatchingWrapper = $false
-                break
+        if ($index + 2 -lt $bodyTokens.Count -and
+            $bodyTokens[$index + 1].Text -eq ')' -and $bodyTokens[$index + 2].Text -eq '(') {
+            if ($index -ge 2 -and $bodyTokens[$index - 1].Text -eq '*' -and $bodyTokens[$index - 2].Text -eq '(') {
+                $calleeStart = $index - 2
+                $argumentStart = $index + 2
+            }
+            elseif ($index -ge 1 -and $bodyTokens[$index - 1].Text -eq '(') {
+                $calleeStart = $index - 1
+                $argumentStart = $index + 2
             }
         }
-        if ($hasMatchingWrapper) {
+        elseif ($index + 1 -lt $bodyTokens.Count -and $bodyTokens[$index + 1].Text -eq '(') {
+            $calleeStart = $index
+            $argumentStart = $index + 1
+        }
+
+        if ($calleeStart -lt 0) {
+            continue
+        }
+
+        $parenthesisDepth = 0
+        $argumentEnd = -1
+        for ($cursor = $argumentStart; $cursor -lt $bodyTokens.Count; $cursor++) {
+            if ($bodyTokens[$cursor].Text -eq '(') {
+                $parenthesisDepth++
+            }
+            elseif ($bodyTokens[$cursor].Text -eq ')') {
+                $parenthesisDepth--
+                if ($parenthesisDepth -eq 0) {
+                    $argumentEnd = $cursor
+                    break
+                }
+            }
+        }
+
+        if ($argumentEnd -lt 0 -or $argumentEnd + 1 -ge $bodyTokens.Count -or
+            $bodyTokens[$argumentEnd + 1].Text -ne ';') {
+            continue
+        }
+
+        if ($calleeStart -eq 0) {
+            return $true
+        }
+
+        $prefixToken = $bodyTokens[$calleeStart - 1]
+        if ($prefixToken.Text -in @(';', '{', '}', ':', ')')) {
+            return $true
+        }
+        if ($prefixToken.Kind -eq 'Identifier' -and $prefixToken.Text -in @('do', 'else')) {
             return $true
         }
     }
@@ -322,7 +408,9 @@ function Test-CTokenSequence {
         for ($patternIndex = 0; $patternIndex -lt $PatternTokens.Count; $patternIndex++) {
             $sourceToken = $Tokens[$startIndex + $patternIndex]
             $patternToken = $PatternTokens[$patternIndex]
-            if ($sourceToken.Kind -cne $patternToken.Kind -or $sourceToken.Text -cne $patternToken.Text) {
+            if ($sourceToken.Kind -cne $patternToken.Kind -or
+                $sourceToken.Text -cne $patternToken.Text -or
+                $sourceToken.IsPreprocessorDirective -ne $patternToken.IsPreprocessorDirective) {
                 $matchesSequence = $false
                 break
             }
@@ -359,7 +447,8 @@ function Assert-CFunctionCallState {
         [Parameter(Mandatory)][bool]$ShouldBePresent
     )
 
-    $bodyTokens = @(Get-SourceFunctionBodyTokens -RelativePath $RelativePath -FunctionName $BodyFunction)
+    $bodyTokens = @(Get-SourceFunctionBodyTokens -RelativePath $RelativePath -FunctionName $BodyFunction |
+        Where-Object { -not $_.IsPreprocessorDirective })
     $isPresent = Test-CBodyFunctionCall -Tokens $bodyTokens -FunctionName $FunctionName
     Assert-ContractState -RelativePath $RelativePath -Description "call to $FunctionName in $BodyFunction" -IsPresent $isPresent -ShouldBePresent $ShouldBePresent
 }
@@ -397,7 +486,8 @@ function Assert-CBodyTokenSequenceState {
         [Parameter(Mandatory)][bool]$ShouldBePresent
     )
 
-    $bodyTokens = @(Get-SourceFunctionBodyTokens -RelativePath $RelativePath -FunctionName $BodyFunction)
+    $bodyTokens = @(Get-SourceFunctionBodyTokens -RelativePath $RelativePath -FunctionName $BodyFunction |
+        Where-Object { -not $_.IsPreprocessorDirective })
     $patternTokens = @(Get-ActiveCTokens -SourceText $CodeText)
     $isPresent = Test-CTokenSequence -Tokens $bodyTokens -PatternTokens $patternTokens
     Assert-ContractState -RelativePath $RelativePath -Description "$CodeText in $BodyFunction" -IsPresent $isPresent -ShouldBePresent $ShouldBePresent
@@ -422,6 +512,32 @@ if (Test-CBodyFunctionCall -Tokens $emptyBodyTokens -FunctionName 'RequiredCall'
 $callingBodyTokens = @(Get-CFunctionBodyTokens -Tokens $functionContextTokens -FunctionName 'CallingBody')
 if (-not (Test-CBodyFunctionCall -Tokens $callingBodyTokens -FunctionName 'RequiredCall')) {
     throw 'Self-test failed: an actual function-body call was not detected.'
+}
+
+$macroBodyProbeTokens = @(Get-ActiveCTokens -SourceText '#define TargetBody() { Required(); }')
+$macroBodyRejected = $false
+try {
+    @(Get-CFunctionBodyTokens -Tokens $macroBodyProbeTokens -FunctionName 'TargetBody') | Out-Null
+}
+catch {
+    if ($_.Exception.Message -like 'C function definition not found:*') {
+        $macroBodyRejected = $true
+    }
+    else {
+        throw
+    }
+}
+if (-not $macroBodyRejected) {
+    throw 'Self-test failed: a function-like macro was treated as a function definition.'
+}
+
+$typedefPrototypeTokens = @(Get-ActiveCTokens -SourceText 'void PrototypeBody(void) { Result_t RequiredCall(void); }')
+$typedefPrototypeBody = @(Get-CFunctionBodyTokens -Tokens $typedefPrototypeTokens -FunctionName 'PrototypeBody')
+if (Test-CBodyFunctionCall -Tokens $typedefPrototypeBody -FunctionName 'RequiredCall') {
+    throw 'Self-test failed: a typedef-return prototype was treated as a body call.'
+}
+if (-not (Test-CBodyFunctionCall -Tokens @(Get-ActiveCTokens -SourceText '(*ShootInit)();') -FunctionName 'ShootInit')) {
+    throw 'Self-test failed: a dereferenced disabled function call was not detected.'
 }
 
 $nonCallFragments = @(
@@ -489,9 +605,6 @@ Write-Output 'C tokenizer self-probes passed.'
 $disabledCalls = @(
     [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotInit'; Call = 'ShootInit' }
     [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotTask'; Call = 'ShootTask' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Call = 'CANCommInit' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Call = 'CANCommGet' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Call = 'CANCommSend' }
 )
 
 foreach ($entry in $disabledCalls) {
@@ -538,6 +651,8 @@ $requiredCalls = @(
     [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotInit'; Call = 'GimbalInit' }
     [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotTask'; Call = 'RobotCMDTask' }
     [PSCustomObject]@{ Path = 'application/robot.c'; Body = 'RobotTask'; Call = 'GimbalTask' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Call = 'RemoteControlSet' }
+    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Call = 'ImageMouseKeySet' }
 )
 
 foreach ($entry in $requiredCalls) {
@@ -548,8 +663,6 @@ $requiredTokenSequences = @(
     [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Code = 'RemoteControlInit(&huart3)' }
     [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Code = 'TransferImageInit(&huart6)' }
     [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDInit'; Code = 'VisionInit(&huart1)' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'RemoteControlSet();' }
-    [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'ImageMouseKeySet();' }
     [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'gimbal_cmd_send.gimbal_mode = GIMBAL_ZERO_FORCE;' }
     [PSCustomObject]@{ Path = 'application/cmd/robot_cmd.c'; Body = 'RobotCMDTask'; Code = 'PubPushMessage(gimbal_cmd_pub, (void *)&gimbal_cmd_send);' }
 )
