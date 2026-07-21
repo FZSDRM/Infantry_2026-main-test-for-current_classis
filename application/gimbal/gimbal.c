@@ -8,6 +8,131 @@
 #include "bmi088.h"
 #include "bsp_dwt.h"  
 #include "motor_offline_alarm.h" // 电机离线检测
+#include "gm6020_id_scan_logic.h"
+
+#ifdef GM6020_ID_SCAN_MODE
+
+static attitude_t *gimba_IMU_data;
+static DJIMotorInstance *scan_motors[GM6020_ID_SCAN_MOTOR_COUNT];
+static Publisher_t *gimbal_pub;
+static Subscriber_t *gimbal_sub;
+static Gimbal_Upload_Data_s gimbal_feedback_data;
+static Gimbal_Ctrl_Cmd_s gimbal_cmd_recv;
+static GM6020IDScanLogic scan_logic;
+
+static void StopAllScanMotors(void)
+{
+    for (uint8_t motor_index = 0u;
+         motor_index < GM6020_ID_SCAN_MOTOR_COUNT;
+         motor_index++) {
+        DJIMotorSetRef(scan_motors[motor_index], 0.0f);
+        DJIMotorStop(scan_motors[motor_index]);
+    }
+}
+
+static float ClampScanSpeed(float speed_ref_dps)
+{
+    if (speed_ref_dps > GM6020_ID_SCAN_MAX_SPEED_DPS) {
+        return GM6020_ID_SCAN_MAX_SPEED_DPS;
+    }
+    if (speed_ref_dps < -GM6020_ID_SCAN_MAX_SPEED_DPS) {
+        return -GM6020_ID_SCAN_MAX_SPEED_DPS;
+    }
+    return speed_ref_dps;
+}
+
+void GimbalInit()
+{
+    const GM6020IDScanLogicConfig logic_config = {
+        .motor_count = GM6020_ID_SCAN_MOTOR_COUNT,
+        .max_speed_dps = GM6020_ID_SCAN_MAX_SPEED_DPS,
+        .travel_deg = GM6020_ID_SCAN_TRAVEL_DEG,
+        .origin_tolerance_deg = GM6020_ID_SCAN_ORIGIN_TOL_DEG,
+        .online_timeout_ms = GM6020_ID_SCAN_ONLINE_TIMEOUT_MS,
+        .motion_timeout_ms = GM6020_ID_SCAN_MOTION_TIMEOUT_MS,
+        .settle_ms = GM6020_ID_SCAN_SETTLE_MS,
+    };
+
+    gimba_IMU_data = INS_Init();
+
+    for (uint8_t motor_index = 0u;
+         motor_index < GM6020_ID_SCAN_MOTOR_COUNT;
+         motor_index++) {
+        Motor_Init_Config_s scan_motor_config = {
+            .can_init_config = {
+                .can_handle = &hcan2,
+                .tx_id = GM6020_ID_SCAN_FIRST_ID + motor_index,
+            },
+            .controller_param_init_config = {
+                .speed_PID = {
+                    .Kp = 100.0f,
+                    .Ki = 0.0f,
+                    .Kd = 0.0f,
+                    .MaxOut = GM6020_ID_SCAN_CURRENT_MAX_RAW,
+                },
+            },
+            .controller_setting_init_config = {
+                .angle_feedback_source = MOTOR_FEED,
+                .speed_feedback_source = MOTOR_FEED,
+                .outer_loop_type = SPEED_LOOP,
+                .close_loop_type = SPEED_LOOP,
+                .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+                .feedback_reverse_flag = FEEDBACK_DIRECTION_NORMAL,
+                .feedforward_flag = FEEDFORWARD_NONE,
+            },
+            .motor_type = GM6020_CURRENT,
+        };
+
+        scan_motors[motor_index] = DJIMotorInit(&scan_motor_config);
+        DJIMotorSetRef(scan_motors[motor_index], 0.0f);
+        DJIMotorStop(scan_motors[motor_index]);
+    }
+
+    GM6020IDScanLogicInit(&scan_logic, &logic_config);
+    gimbal_pub = PubRegister("gimbal_feed", sizeof(Gimbal_Upload_Data_s));
+    gimbal_sub = SubRegister("gimbal_cmd", sizeof(Gimbal_Ctrl_Cmd_s));
+}
+
+void GimbalTask()
+{
+    GM6020IDScanInput input;
+    GM6020IDScanOutput output;
+    uint8_t selected_motor;
+    float speed_ref;
+
+    SubGetMessage(gimbal_sub, &gimbal_cmd_recv);
+    selected_motor = scan_logic.motor_index;
+    input.enabled = gimbal_cmd_recv.gimbal_mode != GIMBAL_ZERO_FORCE;
+    input.online = DJIMotorIsOnline(scan_motors[selected_motor]);
+    input.now_ms = (uint32_t)DWT_GetTimeline_ms();
+    input.angle_deg = scan_motors[selected_motor]->measure.total_angle;
+    output = GM6020IDScanLogicStep(&scan_logic, &input);
+
+    switch (output.action) {
+    case GM6020_SCAN_ACTION_STOP_ALL:
+        StopAllScanMotors();
+        break;
+    case GM6020_SCAN_ACTION_STOP_CURRENT:
+        DJIMotorSetRef(scan_motors[output.motor_index], 0.0f);
+        DJIMotorStop(scan_motors[output.motor_index]);
+        break;
+    case GM6020_SCAN_ACTION_RUN_CURRENT:
+        StopAllScanMotors();
+        speed_ref = ClampScanSpeed(output.speed_ref_dps);
+        DJIMotorEnable(scan_motors[output.motor_index]);
+        DJIMotorSetRef(scan_motors[output.motor_index], speed_ref);
+        break;
+    case GM6020_SCAN_ACTION_NONE:
+    default:
+        break;
+    }
+
+    gimbal_feedback_data.gimbal_imu_data = *gimba_IMU_data;
+    gimbal_feedback_data.yaw_motor_single_round_angle = scan_motors[0]->measure.angle_single_round;
+    PubPushMessage(gimbal_pub, (void *)&gimbal_feedback_data);
+}
+
+#else
 
 static attitude_t *gimba_IMU_data; // 云台IMU数据
 static DJIMotorInstance *yaw_motor, *pitch_motor;
@@ -206,7 +331,7 @@ void GimbalInit()
 void GimbalTask()
 {
     // 电机离线报警: yaw=1声, pitch=2声
-    MotorOfflineAlarmTask(gimbal_offline_alarm);
+    //MotorOfflineAlarmTask(gimbal_offline_alarm);
     
     // 获取云台控制数据
     // 后续增加未收到数据的处理
@@ -392,3 +517,5 @@ void GimbalTask()
     // 推送消息
     PubPushMessage(gimbal_pub, (void *)&gimbal_feedback_data);
 }
+
+#endif

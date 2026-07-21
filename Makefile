@@ -159,6 +159,7 @@ modules/message_center/message_center.c \
 modules/daemon/daemon.c \
 modules/vofa/vofa.c \
 application/gimbal/gimbal.c \
+application/gimbal/gm6020_id_scan_logic.c \
 application/chassis/chassis.c \
 application/chassis/chassis_force_ctrl.c \
 application/shoot/shoot.c \

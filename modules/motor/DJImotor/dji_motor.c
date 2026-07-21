@@ -480,7 +480,7 @@ void DJIMotorControl()
         // 电机是否停止运行
         if (motor->stop_flag == MOTOR_STOP)
         { // 若该电机处于停止状态,直接将buff置零
-            memset(sender_assignment[group].tx_buff + 2 * num, 0, 16u);
+            memset(sender_assignment[group].tx_buff + 2 * num, 0, 2u);
             motor->real_output = motor->measure.target_current = 0;
         }
     }

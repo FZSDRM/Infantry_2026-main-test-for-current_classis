@@ -8,6 +8,7 @@ $disabledCalls = @(
     [PSCustomObject]@{ Path = 'modules/motor/motor_task.c'; Body = 'MotorControlTask'; Call = 'ServeoMotorControl' }
     [PSCustomObject]@{ Path = 'bsp/bsp_init.c'; Body = 'BSPInit'; Call = 'LEDInit' }
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Body = 'GimbalTask'; Call = 'VOFA' }
+    [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Body = 'GimbalTask'; Call = 'MotorOfflineAlarmTask' }
 )
 
 foreach ($entry in $disabledCalls) {
@@ -17,6 +18,7 @@ foreach ($entry in $disabledCalls) {
 $disabledIdentifiers = @(
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Identifier = 'chassis_speed_sub' }
     [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Identifier = 'VOFA' }
+    [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Identifier = 'MotorOfflineAlarmTask' }
 )
 
 foreach ($entry in $disabledIdentifiers) {
@@ -43,8 +45,6 @@ $requiredBodyTokenSequences = @(
     [PSCustomObject]@{ Path = 'Src/freertos.c'; Body = 'MX_FREERTOS_Init'; Code = 'motorTaskHandle = osThreadCreate(osThread(motortask), NULL);' }
     [PSCustomObject]@{ Path = 'Src/freertos.c'; Body = 'MX_FREERTOS_Init'; Code = 'daemonTaskHandle = osThreadCreate(osThread(daemontask), NULL);' }
     [PSCustomObject]@{ Path = 'Src/freertos.c'; Body = 'MX_FREERTOS_Init'; Code = 'robotTaskHandle = osThreadCreate(osThread(robottask), NULL);' }
-    [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Body = 'GimbalInit'; Code = 'yaw_motor = DJIMotorInit(&yaw_config);' }
-    [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Body = 'GimbalInit'; Code = 'pitch_motor = DJIMotorInit(&pitch_config);' }
 )
 
 foreach ($entry in $requiredBodyTokenSequences) {
@@ -61,7 +61,6 @@ $requiredCalls = @(
     [PSCustomObject]@{ Path = 'bsp/bsp_init.c'; Body = 'BSPInit'; Call = 'BSPLogInit' }
     [PSCustomObject]@{ Path = 'bsp/bsp_init.c'; Body = 'BSPInit'; Call = 'IMUTempInit' }
     [PSCustomObject]@{ Path = 'bsp/bsp_init.c'; Body = 'BSPInit'; Call = 'BuzzerInit' }
-    [PSCustomObject]@{ Path = 'application/gimbal/gimbal.c'; Body = 'GimbalTask'; Call = 'MotorOfflineAlarmTask' }
 )
 
 foreach ($entry in $requiredCalls) {
@@ -70,5 +69,9 @@ foreach ($entry in $requiredCalls) {
 
 Assert-CTokenSequenceState -RelativePath 'application/gimbal/gimbal.c' `
     -CodeText 'static Chassis_Upload_Data_s chassis_real_speed;' -ShouldBePresent $true
+Assert-CTokenSequenceState -RelativePath 'application/gimbal/gimbal.c' `
+    -CodeText 'yaw_motor = DJIMotorInit(&yaw_config);' -ShouldBePresent $true
+Assert-CTokenSequenceState -RelativePath 'application/gimbal/gimbal.c' `
+    -CodeText 'pitch_motor = DJIMotorInit(&pitch_config);' -ShouldBePresent $true
 
 Write-Output 'Gimbal/vision runtime contract passed.'

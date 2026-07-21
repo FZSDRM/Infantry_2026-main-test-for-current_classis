@@ -22,6 +22,19 @@
 //#define CHASSIS_ONLY                  // 底盘调试模式: 无云台,只有底盘+超级电容+遥控器 
 //#define FORCE_CONTROL_CHASSIS_BOARD   // 力控底盘板
 
+/* GM6020 ID 1-7 遍历模式；注释首行即可恢复原 yaw/pitch 云台控制。 */
+#define GM6020_ID_SCAN_MODE
+#define GM6020_ID_SCAN_FIRST_ID          1u
+#define GM6020_ID_SCAN_LAST_ID           7u
+#define GM6020_ID_SCAN_MOTOR_COUNT       (GM6020_ID_SCAN_LAST_ID - GM6020_ID_SCAN_FIRST_ID + 1u)
+#define GM6020_ID_SCAN_MAX_SPEED_DPS     10.0f
+#define GM6020_ID_SCAN_TRAVEL_DEG        10.0f
+#define GM6020_ID_SCAN_ORIGIN_TOL_DEG    0.5f
+#define GM6020_ID_SCAN_ONLINE_TIMEOUT_MS 1000u
+#define GM6020_ID_SCAN_MOTION_TIMEOUT_MS 3000u
+#define GM6020_ID_SCAN_SETTLE_MS         300u
+#define GM6020_ID_SCAN_CURRENT_MAX_RAW   3000.0f
+
 
 /* 遥控器类型选择: 定义USE_IMAGE_REMOTE使用图传遥控器(UART6), 注释掉则使用原DJI遥控器(USART3/DBUS) */
 //#define USE_IMAGE_REMOTE
