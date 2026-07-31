@@ -37,6 +37,14 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
+# 专用从板控制链不使用 CMSIS-DSP。生成工程的 `-l:文件名` 在当前中文路径下无法被 GNU ld 命中，
+# 因此从本目标移除该无效项；原库文件和 CubeMX 配置均保留，恢复整机应用时可另行修正库路径。
+get_target_property(PROJECT_LINK_LIBRARIES
+    ${CMAKE_PROJECT_NAME} LINK_LIBRARIES)
+list(FILTER PROJECT_LINK_LIBRARIES EXCLUDE REGEX "cortexM4lf_math")
+set_property(TARGET ${CMAKE_PROJECT_NAME}
+    PROPERTY LINK_LIBRARIES "${PROJECT_LINK_LIBRARIES}")
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
@@ -98,6 +106,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     modules/message_center/message_center.c
     modules/daemon/daemon.c
     modules/vofa/vofa.c
+    modules/ti_gm6020_bridge/rod_bridge_protocol.c
+    application/ti_gm6020_bridge/ti_gm6020_bridge.c
     application/gimbal/gimbal.c
     application/gimbal/gm6020_id_scan_logic.c
     application/chassis/chassis.c
@@ -152,6 +162,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     modules/message_center
     modules/daemon
     modules/vofa
+    modules/ti_gm6020_bridge
+    application/ti_gm6020_bridge
     modules
 )
 

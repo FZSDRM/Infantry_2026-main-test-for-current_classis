@@ -22,6 +22,53 @@
 //#define CHASSIS_ONLY                  // 底盘调试模式: 无云台,只有底盘+超级电容+遥控器 
 //#define FORCE_CONTROL_CHASSIS_BOARD   // 力控底盘板
 
+/* ================= TI 主控 -> C 板 -> GM6020 专用执行器模式 =================
+ * 置 1 后，C 板不再运行遥控器、视觉、IMU、裁判系统和原云台应用，只保留：
+ * 1. RobotTask：解析 USART1 控制帧、执行失联保护并回传电机状态；
+ * 2. MotorTask：500 Hz 位置/速度闭环并通过 CAN1 发送 GM6020 电流；
+ * 3. DaemonTask：100 Hz 检查 GM6020 CAN 反馈是否离线。
+ * 置 0 可恢复当前分支原有的机器人应用装配，桥接模块仍保留在源码中。
+ */
+#define TI_GM6020_BRIDGE_MODE                 1U
+/* TI 的 PB0/TX 接 C 板 PB7/USART1_RX；C 板 PA9/USART1_TX 接 TI PB1/RX，双方共地。 */
+#define TI_GM6020_BRIDGE_UART_BAUD             115200U
+/* USART1 DMA 单次接收容量；协议解析器会跨 IDLE/DMA 分块拼帧，不要求一包一次收齐。 */
+#define TI_GM6020_BRIDGE_UART_RX_BUFFER_SIZE   64U
+/* TI 正常以 200 Hz 发命令；超过该时间没有有效 CRC 帧时立即发送零电流并取消标定。 */
+#define TI_GM6020_BRIDGE_COMMAND_TIMEOUT_MS    50U
+/* C 板状态回传周期；20 ms 即 50 Hz，兼顾 OLED/调试可见性和 115200 波特率余量。 */
+#define TI_GM6020_BRIDGE_FEEDBACK_PERIOD_MS    20U
+/* GM6020 挂在 C 板 CAN1，拨码 ID 范围为 1～7；当前默认使用 ID1。 */
+#define TI_GM6020_BRIDGE_MOTOR_ID              1U
+/* 电机轴正方向相对“摆杆正角度”的符号，只允许 +1 或 -1；方向错误只改这里。 */
+#define TI_GM6020_BRIDGE_MOTOR_DIRECTION_SIGN  1
+/* 电机轴转角 / 摆杆角度；直驱填 1，存在减速或同步带时填实际正数传动比。 */
+#define TI_GM6020_BRIDGE_TRANSMISSION_RATIO    1.0f
+/* C 板第二道机械角保护，单位 rad；范围应覆盖正式 ±0.20 rad 和既有 B21 抬升测试。 */
+#define TI_GM6020_BRIDGE_ROD_MIN_RAD           (-1.40f)
+#define TI_GM6020_BRIDGE_ROD_MAX_RAD           0.25f
+/* 速度模式绝对上限，单位 rad/s；超出协议目标会在 C 板侧钳位。 */
+#define TI_GM6020_BRIDGE_ROD_MAX_SPEED_RPS     3.2f
+/* 位置外环：输入/反馈为电机多圈角度（°），输出为速度参考（°/s）。 */
+#define TI_GM6020_BRIDGE_ANGLE_KP              8.0f
+#define TI_GM6020_BRIDGE_ANGLE_KI              0.0f
+#define TI_GM6020_BRIDGE_ANGLE_KD              0.0f
+#define TI_GM6020_BRIDGE_ANGLE_MAX_SPEED_DPS   180.0f
+/* 速度内环：输入/反馈为电机角速度（°/s），输出为 GM6020 0x1FE 电流原始值。 */
+#define TI_GM6020_BRIDGE_SPEED_KP              100.0f
+#define TI_GM6020_BRIDGE_SPEED_KI              0.0f
+#define TI_GM6020_BRIDGE_SPEED_KD              0.0f
+/* 首次上板采用较保守的 3000 raw 限流；确认方向和机构无干涉后再逐步提高。 */
+#define TI_GM6020_BRIDGE_CURRENT_MAX_RAW       3000.0f
+
+#if (TI_GM6020_BRIDGE_MODE > 1U) || \
+    (TI_GM6020_BRIDGE_MOTOR_ID < 1U) || \
+    (TI_GM6020_BRIDGE_MOTOR_ID > 7U) || \
+    ((TI_GM6020_BRIDGE_MOTOR_DIRECTION_SIGN != 1) && \
+     (TI_GM6020_BRIDGE_MOTOR_DIRECTION_SIGN != -1))
+#error Invalid TI_GM6020 bridge configuration
+#endif
+
 /* GM6020 ID 1-7 遍历模式；注释首行即可恢复原 yaw/pitch 云台控制。 */
 #define GM6020_ID_SCAN_MODE
 #define GM6020_ID_SCAN_FIRST_ID          1u

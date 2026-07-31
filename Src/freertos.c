@@ -25,19 +25,21 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "robot_def.h"
+#if !TI_GM6020_BRIDGE_MODE
 #include "ins_task.h"
-#include "motor_task.h"
 #include "led_task.h"
 #include "referee_task.h"
-#include "robot_def.h"
 
 #if defined(VISION_USE_VCP) || defined(VISION_USE_UART)
 #include "master_process.h"
 #elif defined(VISION_USE_SERIALPORT)
 #include "serialport_protocol.h"
 #endif
+#endif
 
 #include "daemon.h"
+#include "motor_task.h"
 #include "robot.h"
 /* USER CODE END Includes */
 
@@ -58,18 +60,22 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+#if !TI_GM6020_BRIDGE_MODE
 osThreadId insTaskHandle;
 osThreadId ledTaskHandle;
+osThreadId uiTaskHandle;
+#endif
 osThreadId robotTaskHandle;
 osThreadId motorTaskHandle;
 osThreadId daemonTaskHandle;
-osThreadId uiTaskHandle;
 /* USER CODE END Variables */
 osThreadId defaultTaskHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
+#if !TI_GM6020_BRIDGE_MODE
 void StartINSTASK(void const *argument);
+#endif
 
 void StartMOTORTASK(void const *argument);
 
@@ -77,7 +83,9 @@ void StartDAEMONTASK(void const *argument);
 
 void StartROBOTTASK(void const *argument);
 
+#if !TI_GM6020_BRIDGE_MODE
 void StartUITASK(void const *argument);
+#endif
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void const * argument);
@@ -134,9 +142,12 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+#if !TI_GM6020_BRIDGE_MODE
   osThreadDef(instask, StartINSTASK, osPriorityNormal, 0, 1024);
   insTaskHandle = osThreadCreate(osThread(instask), NULL);
+#endif
 
+  /* 专用从板仅保留以下三个常驻任务：电机闭环、离线检测和串口桥接。 */
   osThreadDef(motortask, StartMOTORTASK, osPriorityNormal, 0, 512);
   motorTaskHandle = osThreadCreate(osThread(motortask), NULL);
 
@@ -146,8 +157,10 @@ void MX_FREERTOS_Init(void) {
   osThreadDef(robottask, StartROBOTTASK, osPriorityAboveNormal, 0, 1024);
   robotTaskHandle = osThreadCreate(osThread(robottask), NULL);
 
-  // osThreadDef(uitask, StartUITASK, osPriorityNormal, 0, 512); // 云台视觉专用分支不定义裁判 UI 任务
-  // uiTaskHandle = osThreadCreate(osThread(uitask), NULL); // 云台视觉专用分支不启动裁判 UI 任务
+#if !TI_GM6020_BRIDGE_MODE
+  // osThreadDef(uitask, StartUITASK, osPriorityNormal, 0, 512); // 当前分支不定义裁判 UI 任务
+  // uiTaskHandle = osThreadCreate(osThread(uitask), NULL); // 当前分支不启动裁判 UI 任务
+#endif
 
   /* USER CODE END RTOS_THREADS */
 
@@ -171,6 +184,7 @@ void StartDefaultTask(void const * argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+#if !TI_GM6020_BRIDGE_MODE
 void StartINSTASK(void const *argument)
 {
   while (1)
@@ -193,6 +207,7 @@ void StartINSTASK(void const *argument)
     osDelay(1);
   }
 }
+#endif
 
 void StartMOTORTASK(void const *argument)
 {
@@ -224,6 +239,7 @@ void StartROBOTTASK(void const *argument)
   }
 }
 
+#if !TI_GM6020_BRIDGE_MODE
 void StartUITASK(void const *argument)
 {
   My_UI_init();
@@ -233,4 +249,5 @@ void StartUITASK(void const *argument)
     osDelay(30);
   }
 }
+#endif
 /* USER CODE END Application */

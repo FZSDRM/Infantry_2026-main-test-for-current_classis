@@ -51,6 +51,7 @@
 
 # Build directories and CMake generated files
 build/
+cmake-build-*/
 Debug/
 Release/
 RelWithDebInfo/

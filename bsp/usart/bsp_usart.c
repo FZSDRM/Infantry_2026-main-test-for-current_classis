@@ -38,7 +38,7 @@ void USARTServiceInit(USARTInstance *_instance)
 
 USARTInstance *USARTRegister(USART_Init_Config_s *init_config)
 {
-    if (idx > DEVICE_USART_CNT) // 超过最大实例数
+    if (idx >= DEVICE_USART_CNT) // 超过最大实例数
         while (1)
             ;
     USARTInstance *instance = (USARTInstance *)malloc(sizeof(USARTInstance));
@@ -77,14 +77,9 @@ void USARTSend(USARTInstance *_instance, uint8_t *send_buf, uint16_t send_size, 
 /* 串口发送时,gstate会被设为BUSY_TX */
 uint8_t USARTIsReady(USARTInstance *_instance)
 {
-    if (_instance->usart_handle->gState | HAL_UART_STATE_BUSY_TX)
-    {
-        return 0;
-    }
-    else
-    {
-        return 1;
-    }
+    return (_instance != NULL) &&
+           (_instance->usart_handle != NULL) &&
+           (_instance->usart_handle->gState == HAL_UART_STATE_READY);
 }
 
 /**
@@ -104,6 +99,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     { // find the instance which is being handled
         if (huart == usart_instance[i]->usart_handle)
         { // call the callback function if it is not NULL
+            usart_instance[i]->received_size = Size;
             if (usart_instance[i]->module_callback != NULL)
             {
                 usart_instance[i]->module_callback();
