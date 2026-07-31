@@ -37,13 +37,19 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
-# 专用从板控制链不使用 CMSIS-DSP。生成工程的 `-l:文件名` 在当前中文路径下无法被 GNU ld 命中，
-# 因此从本目标移除该无效项；原库文件和 CubeMX 配置均保留，恢复整机应用时可另行修正库路径。
+# CubeMX 生成的 CMSIS-DSP 链接参数会把库目录展开成绝对路径。GNU ld 在当前包含中文字符的
+# 工程路径下无法打开该库，因此将官方库原样复制到构建目录，并在最终链接阶段仅使用 ASCII
+# 相对路径。这里只规避 Windows 工具链的路径编码问题，不修改 CMSIS-DSP 库及 INS 算法实现。
 get_target_property(PROJECT_LINK_LIBRARIES
     ${CMAKE_PROJECT_NAME} LINK_LIBRARIES)
 list(FILTER PROJECT_LINK_LIBRARIES EXCLUDE REGEX "cortexM4lf_math")
 set_property(TARGET ${CMAKE_PROJECT_NAME}
     PROPERTY LINK_LIBRARIES "${PROJECT_LINK_LIBRARIES}")
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/Middlewares/ST/ARM/DSP/Lib/libarm_cortexM4lf_math.a"
+    "${CMAKE_CURRENT_BINARY_DIR}/libcmsis_dsp.a"
+    COPYONLY)
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -182,4 +188,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 
     # Add user defined libraries
+    "-L."
+    "-lcmsis_dsp"
 )

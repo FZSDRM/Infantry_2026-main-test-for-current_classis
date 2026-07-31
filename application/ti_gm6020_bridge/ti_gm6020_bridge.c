@@ -6,12 +6,15 @@
 #include "ti_gm6020_bridge.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdbool.h>
 #include <string.h>
 
 #include "FreeRTOS.h"
+#include "bsp_temperature.h"
 #include "can.h"
 #include "dji_motor.h"
+#include "ins_task.h"
 #include "robot_def.h"
 #include "rod_bridge_protocol.h"
 #include "task.h"
@@ -37,9 +40,13 @@ volatile uint32_t gTiGm6020BridgeInvalidFrameCount;
 volatile uint32_t gTiGm6020BridgeCommandTimeoutCount;
 volatile uint32_t gTiGm6020BridgeFeedbackFrameCount;
 volatile uint32_t gTiGm6020BridgeFeedbackDropCount;
+volatile uint8_t gTiGm6020BridgeImuOnline;
+volatile uint32_t gTiGm6020BridgeImuSampleCount;
+volatile float gTiGm6020BridgeChassisAccelerationMps2;
 
 static USARTInstance *bridge_uart;
 static DJIMotorInstance *bridge_motor;
+static INS_t *bridge_ins;
 static RodBridgeParser command_parser;
 static volatile PendingBridgeCommand pending_command;
 static volatile uint32_t pending_generation;
@@ -55,6 +62,8 @@ static float motor_zero_offset_deg;
 static float current_feedforward_raw;
 static RodBridgeControlMode applied_mode;
 static uint8_t feedback_tx_buffer[ROD_BRIDGE_MAX_FRAME_SIZE];
+static uint32_t last_imu_sequence;
+static uint32_t last_imu_update_ms;
 
 static float ClampFloat(float value, float minimum, float maximum)
 {
@@ -83,6 +92,45 @@ static int32_t FloatToMicroRadians(float radians)
 static float MicroRadiansToFloat(int32_t micro_radians)
 {
     return (float)micro_radians / MICRO_RADIANS_PER_RADIAN;
+}
+
+/**
+ * @brief 从 1 kHz INS 快照提取沿摆杆方向的底盘加速度，并监督样本是否停更。
+ * @note RobotTask 优先级高于 InsTask，使用奇偶序列避免恰好在 INS 写到一半时接受混合样本。
+ */
+static void UpdateChassisAcceleration(uint32_t now_ms)
+{
+    if (bridge_ins != NULL) {
+        uint32_t sequence_before = bridge_ins->UpdateSequence;
+
+        if ((sequence_before != 0U) && ((sequence_before & 1U) == 0U)) {
+            float acceleration =
+                (float)TI_GM6020_BRIDGE_CHASSIS_ACCEL_SIGN *
+                bridge_ins->MotionAccel_b[
+                    TI_GM6020_BRIDGE_CHASSIS_ACCEL_AXIS];
+            uint32_t sequence_after = bridge_ins->UpdateSequence;
+
+            if ((sequence_before == sequence_after) && isfinite(acceleration)) {
+                gTiGm6020BridgeChassisAccelerationMps2 = ClampFloat(
+                    acceleration,
+                    -TI_GM6020_BRIDGE_CHASSIS_ACCEL_MAX_MPS2,
+                    TI_GM6020_BRIDGE_CHASSIS_ACCEL_MAX_MPS2);
+                if (sequence_after != last_imu_sequence) {
+                    last_imu_sequence = sequence_after;
+                    last_imu_update_ms = now_ms;
+                    gTiGm6020BridgeImuSampleCount = sequence_after / 2U;
+                }
+            }
+        }
+    }
+
+    gTiGm6020BridgeImuOnline =
+        (last_imu_sequence != 0U) &&
+        ((uint32_t)(now_ms - last_imu_update_ms) <=
+         TI_GM6020_BRIDGE_IMU_TIMEOUT_MS);
+    if (gTiGm6020BridgeImuOnline == 0U) {
+        gTiGm6020BridgeChassisAccelerationMps2 = 0.0f;
+    }
 }
 
 /**
@@ -317,6 +365,11 @@ void TiGm6020BridgeInit(void)
         .motor_type = GM6020_CURRENT,
     };
 
+    /* 只恢复板载 IMU 所需的加热 PWM 与 INS，不初始化蜂鸣器、日志或原云台应用。 */
+    IMUTempInit();
+    (void)INS_Init();
+    bridge_ins = INS_GetDataPtr();
+
     memset(&active_command, 0, sizeof(active_command));
     RodBridgeParser_Init(&command_parser);
     huart1.Init.BaudRate = TI_GM6020_BRIDGE_UART_BAUD;
@@ -340,6 +393,11 @@ void TiGm6020BridgeInit(void)
     gTiGm6020BridgeCommandTimeoutCount = 0U;
     gTiGm6020BridgeFeedbackFrameCount = 0U;
     gTiGm6020BridgeFeedbackDropCount = 0U;
+    gTiGm6020BridgeImuOnline = 0U;
+    gTiGm6020BridgeImuSampleCount = 0U;
+    gTiGm6020BridgeChassisAccelerationMps2 = 0.0f;
+    last_imu_sequence = 0U;
+    last_imu_update_ms = 0U;
 }
 
 void TiGm6020BridgeTask(void)
@@ -349,6 +407,7 @@ void TiGm6020BridgeTask(void)
     bool motor_online = DJIMotorHasFeedback(bridge_motor) &&
                         DJIMotorIsOnline(bridge_motor);
 
+    UpdateChassisAcceleration(now_ms);
     if (ConsumeLatestCommand(&latest)) {
         active_command = latest.command;
         active_sequence = latest.sequence;

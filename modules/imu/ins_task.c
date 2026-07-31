@@ -136,6 +136,8 @@ void INS_Task(void)
     // ins update
     if ((count % 1) == 0)
     {
+        /* 奇数序列禁止高优先级控制任务读取到尚未完成重力分离的一半数据。 */
+        INS.UpdateSequence++;
         BMI088_Read(&BMI088);
 
         INS.Accel[X] = BMI088.Accel[X];
@@ -187,6 +189,7 @@ void INS_Task(void)
         INS.Pitch = QEKF_INS.Pitch;
         INS.Roll = QEKF_INS.Roll;
         INS.YawTotalAngle = QEKF_INS.YawTotalAngle;
+        INS.UpdateSequence++;
 
         // VisionSetAltitude(INS.YawTotalAngle, INS.Pitch, INS.Roll);
     }
@@ -264,12 +267,12 @@ static void IMU_Param_Correction(IMU_Param_t *param, float gyro[3], float accel[
         fabsf(param->Pitch - lastPitchOffset) > 0.001f ||
         fabsf(param->Roll - lastRollOffset) > 0.001f || param->flag)
     {
-        cosYaw = arm_cos_f32(param->Yaw / 57.295779513f);
-        cosPitch = arm_cos_f32(param->Pitch / 57.295779513f);
-        cosRoll = arm_cos_f32(param->Roll / 57.295779513f);
-        sinYaw = arm_sin_f32(param->Yaw / 57.295779513f);
-        sinPitch = arm_sin_f32(param->Pitch / 57.295779513f);
-        sinRoll = arm_sin_f32(param->Roll / 57.295779513f);
+        cosYaw = cosf(param->Yaw / 57.295779513f);
+        cosPitch = cosf(param->Pitch / 57.295779513f);
+        cosRoll = cosf(param->Roll / 57.295779513f);
+        sinYaw = sinf(param->Yaw / 57.295779513f);
+        sinPitch = sinf(param->Pitch / 57.295779513f);
+        sinRoll = sinf(param->Roll / 57.295779513f);
 
         // 1.yaw(alpha) 2.pitch(beta) 3.roll(gamma)
         c_11 = cosYaw * cosRoll + sinYaw * sinPitch * sinRoll;
@@ -359,12 +362,12 @@ void EularAngleToQuaternion(float Yaw, float Pitch, float Roll, float *q)
     Yaw /= 57.295779513f;
     Pitch /= 57.295779513f;
     Roll /= 57.295779513f;
-    cosPitch = arm_cos_f32(Pitch / 2);
-    cosYaw = arm_cos_f32(Yaw / 2);
-    cosRoll = arm_cos_f32(Roll / 2);
-    sinPitch = arm_sin_f32(Pitch / 2);
-    sinYaw = arm_sin_f32(Yaw / 2);
-    sinRoll = arm_sin_f32(Roll / 2);
+    cosPitch = cosf(Pitch / 2);
+    cosYaw = cosf(Yaw / 2);
+    cosRoll = cosf(Roll / 2);
+    sinPitch = sinf(Pitch / 2);
+    sinYaw = sinf(Yaw / 2);
+    sinRoll = sinf(Roll / 2);
     q[0] = cosPitch * cosRoll * cosYaw + sinPitch * sinRoll * sinYaw;
     q[1] = sinPitch * cosRoll * cosYaw - cosPitch * sinRoll * sinYaw;
     q[2] = sinPitch * cosRoll * sinYaw + cosPitch * sinRoll * cosYaw;

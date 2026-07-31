@@ -23,10 +23,11 @@
 //#define FORCE_CONTROL_CHASSIS_BOARD   // 力控底盘板
 
 /* ================= TI 主控 -> C 板 -> GM6020 专用执行器模式 =================
- * 置 1 后，C 板不再运行遥控器、视觉、IMU、裁判系统和原云台应用，只保留：
- * 1. RobotTask：解析 USART1 控制帧、执行失联保护并回传电机状态；
- * 2. MotorTask：500 Hz 位置/速度闭环并通过 CAN1 发送 GM6020 电流；
- * 3. DaemonTask：100 Hz 检查 GM6020 CAN 反馈是否离线。
+ * 置 1 后，C 板不再运行遥控器、旧视觉、裁判系统和原云台应用，只保留：
+ * 1. InsTask：1 kHz 读取板载 BMI088，输出去重力的车体运动加速度；
+ * 2. RobotTask：解析 USART1 控制帧、执行失联保护并回传电机状态；
+ * 3. MotorTask：500 Hz 位置/速度闭环并通过 CAN1 发送 GM6020 电流；
+ * 4. DaemonTask：100 Hz 检查 GM6020 CAN 反馈是否离线。
  * 置 0 可恢复当前分支原有的机器人应用装配，桥接模块仍保留在源码中。
  */
 #define TI_GM6020_BRIDGE_MODE                 1U
@@ -60,12 +61,26 @@
 #define TI_GM6020_BRIDGE_SPEED_KD              0.0f
 /* 首次上板采用较保守的 3000 raw 限流；确认方向和机构无干涉后再逐步提高。 */
 #define TI_GM6020_BRIDGE_CURRENT_MAX_RAW       3000.0f
+/*
+ * BMI088 去重力机体系加速度中与摆杆平行的轴：0=X、1=Y、2=Z。
+ * 当前工程底盘代码把 `-MotionAccel_b[0]` 定义为车头正向，因此默认选择 X 轴并取反。
+ */
+#define TI_GM6020_BRIDGE_CHASSIS_ACCEL_AXIS    0U
+#define TI_GM6020_BRIDGE_CHASSIS_ACCEL_SIGN    (-1)
+/* BMI088 连续多长时间没有完成新解算后判为无效；10 ms 覆盖数个 1 kHz 任务周期。 */
+#define TI_GM6020_BRIDGE_IMU_TIMEOUT_MS         10U
+/* 本地平衡算法可使用的底盘加速度绝对上限，单位 m/s²；异常样本先在输入边界钳位。 */
+#define TI_GM6020_BRIDGE_CHASSIS_ACCEL_MAX_MPS2 20.0f
 
 #if (TI_GM6020_BRIDGE_MODE > 1U) || \
     (TI_GM6020_BRIDGE_MOTOR_ID < 1U) || \
     (TI_GM6020_BRIDGE_MOTOR_ID > 7U) || \
+    (TI_GM6020_BRIDGE_CHASSIS_ACCEL_AXIS > 2U) || \
     ((TI_GM6020_BRIDGE_MOTOR_DIRECTION_SIGN != 1) && \
-     (TI_GM6020_BRIDGE_MOTOR_DIRECTION_SIGN != -1))
+     (TI_GM6020_BRIDGE_MOTOR_DIRECTION_SIGN != -1)) || \
+    ((TI_GM6020_BRIDGE_CHASSIS_ACCEL_SIGN != 1) && \
+     (TI_GM6020_BRIDGE_CHASSIS_ACCEL_SIGN != -1)) || \
+    (TI_GM6020_BRIDGE_IMU_TIMEOUT_MS == 0U)
 #error Invalid TI_GM6020 bridge configuration
 #endif
 

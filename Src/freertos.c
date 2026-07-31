@@ -26,8 +26,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "robot_def.h"
-#if !TI_GM6020_BRIDGE_MODE
 #include "ins_task.h"
+#if !TI_GM6020_BRIDGE_MODE
 #include "led_task.h"
 #include "referee_task.h"
 
@@ -60,8 +60,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-#if !TI_GM6020_BRIDGE_MODE
 osThreadId insTaskHandle;
+#if !TI_GM6020_BRIDGE_MODE
 osThreadId ledTaskHandle;
 osThreadId uiTaskHandle;
 #endif
@@ -73,9 +73,7 @@ osThreadId defaultTaskHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-#if !TI_GM6020_BRIDGE_MODE
 void StartINSTASK(void const *argument);
-#endif
 
 void StartMOTORTASK(void const *argument);
 
@@ -142,12 +140,10 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
-#if !TI_GM6020_BRIDGE_MODE
   osThreadDef(instask, StartINSTASK, osPriorityNormal, 0, 1024);
   insTaskHandle = osThreadCreate(osThread(instask), NULL);
-#endif
 
-  /* 专用从板仅保留以下三个常驻任务：电机闭环、离线检测和串口桥接。 */
+  /* 专用从板常驻任务为 BMI088 INS、电机闭环、离线检测和串口桥接。 */
   osThreadDef(motortask, StartMOTORTASK, osPriorityNormal, 0, 512);
   motorTaskHandle = osThreadCreate(osThread(motortask), NULL);
 
@@ -184,16 +180,15 @@ void StartDefaultTask(void const * argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-#if !TI_GM6020_BRIDGE_MODE
 void StartINSTASK(void const *argument)
 {
   while (1)
   {
-    static uint8_t cnt = 0;
-
     // 1kHz
     INS_Task();
-    
+
+#if !TI_GM6020_BRIDGE_MODE
+    static uint8_t cnt = 0;
     if (cnt % 5   == 0)
     {
 #if defined(VISION_USE_VCP) || defined(VISION_USE_UART)
@@ -204,10 +199,10 @@ void StartINSTASK(void const *argument)
     }
 
     cnt++;
+#endif
     osDelay(1);
   }
 }
-#endif
 
 void StartMOTORTASK(void const *argument)
 {

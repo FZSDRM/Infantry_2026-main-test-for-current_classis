@@ -19,15 +19,21 @@ extern volatile uint32_t gTiGm6020BridgeInvalidFrameCount;
 extern volatile uint32_t gTiGm6020BridgeCommandTimeoutCount;
 extern volatile uint32_t gTiGm6020BridgeFeedbackFrameCount;
 extern volatile uint32_t gTiGm6020BridgeFeedbackDropCount;
+/** 板载 BMI088 是否持续产生完整 INS 样本。 */
+extern volatile uint8_t gTiGm6020BridgeImuOnline;
+/** 已被桥接控制任务接受的 BMI088 INS 样本数。 */
+extern volatile uint32_t gTiGm6020BridgeImuSampleCount;
+/** 沿摆杆正方向的去重力底盘加速度，单位 m/s²；IMU 超时后归零。 */
+extern volatile float gTiGm6020BridgeChassisAccelerationMps2;
 
 /**
- * @brief 将 USART1 改为 115200 8N1、注册一台 CAN1 GM6020 并保持零电流。
- * @note RobotInit 在全局中断关闭期间调用；电机收到第一帧有效反馈和第一帧使能命令前不会启用。
+ * @brief 初始化 BMI088 INS、将 USART1 改为 115200 8N1，并注册一台 CAN1 GM6020。
+ * @note RobotInit 在全局中断关闭期间调用；BMI088 在线标定要求车辆静止，电机在有效命令到达前保持零电流。
  */
 void TiGm6020BridgeInit(void);
 
 /**
- * @brief 消费最新串口命令、执行 50 ms 失联保护并周期回传电机状态。
+ * @brief 更新底盘纵向加速度、消费最新串口命令、执行失联保护并周期回传电机状态。
  * @note 由 500 Hz RobotTask 调用；真正的 PID 与 CAN 发送仍由同频 MotorTask 独立执行。
  */
 void TiGm6020BridgeTask(void);

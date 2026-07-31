@@ -40,10 +40,15 @@ typedef struct
 
 typedef struct
 {
+    /**
+     * 解算写入序列：奇数表示本帧仍在更新，偶数表示整帧可读；每完成一帧增加 2。
+     * 跨任务读取者应在复制数据前后各读取一次，并仅接受相等的非零偶数值。
+     */
+    volatile uint32_t UpdateSequence;
     float q[4]; // 四元数估计值
 
-    float MotionAccel_b[3]; // 机体坐标加速度
-    float MotionAccel_n[3]; // 绝对系加速度
+    float MotionAccel_b[3]; // 已去重力的机体坐标运动加速度，单位 m/s²
+    float MotionAccel_n[3]; // 已去重力的绝对系运动加速度，单位 m/s²
 
     float GyroAlpha[3];     // 角加速度 (rad/s^2) - 已滤波
 
